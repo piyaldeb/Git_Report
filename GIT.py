@@ -60,23 +60,41 @@ LABELS = {
 
 # ========= GOOGLE SHEETS CLIENT ==========
 def get_gspread_client():
-    # Prefer local service_account.json if it exists (local dev)
-    if os.path.exists("service_account.json"):
-        return gspread.service_account(filename="service_account.json")
+    # Check service_account.json in script dir or current dir (local dev)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    for sa_path in [
+        os.path.join(script_dir, "service_account.json"),
+        "service_account.json",
+    ]:
+        if os.path.exists(sa_path):
+            return gspread.service_account(filename=sa_path)
+
     # Fall back to GOOGLE_CREDS_BASE64 env var (GitHub Actions)
-    creds_b64 = os.getenv("GOOGLE_CREDS_BASE64")
-    if creds_b64:
-        # Fix missing base64 padding (common with GitHub secrets)
-        creds_b64 = creds_b64.strip() + '=' * (-len(creds_b64.strip()) % 4)
-        creds_json = base64.b64decode(creds_b64).decode("utf-8")
-        creds_dict = json.loads(creds_json)
+    creds_raw = os.getenv("GOOGLE_CREDS_BASE64")
+    if creds_raw:
+        creds_dict = None
+        # Try 1: raw JSON string directly
+        try:
+            creds_dict = json.loads(creds_raw.strip())
+        except json.JSONDecodeError:
+            pass
+        # Try 2: base64-encoded JSON
+        if creds_dict is None:
+            try:
+                padded = creds_raw.strip() + '=' * (-len(creds_raw.strip()) % 4)
+                creds_dict = json.loads(base64.b64decode(padded).decode("utf-8"))
+            except Exception:
+                pass
+        if creds_dict is None:
+            raise Exception("GOOGLE_CREDS_BASE64 is neither valid JSON nor valid base64-encoded JSON")
         scopes = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive",
         ]
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
-    raise Exception("No Google credentials found. Provide service_account.json or GOOGLE_CREDS_BASE64 env var.")
+
+    raise Exception("No Google credentials found. Place service_account.json in the script folder or set GOOGLE_CREDS_BASE64.")
 
 # ========= RETRY LOGIC ==========
 def retry_request(method, url, max_retries=3, backoff=3, **kwargs):
