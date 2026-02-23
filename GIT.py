@@ -60,8 +60,14 @@ LABELS = {
 
 # ========= GOOGLE SHEETS CLIENT ==========
 def get_gspread_client():
+    # Prefer local service_account.json if it exists (local dev)
+    if os.path.exists("service_account.json"):
+        return gspread.service_account(filename="service_account.json")
+    # Fall back to GOOGLE_CREDS_BASE64 env var (GitHub Actions)
     creds_b64 = os.getenv("GOOGLE_CREDS_BASE64")
     if creds_b64:
+        # Fix missing base64 padding (common with GitHub secrets)
+        creds_b64 = creds_b64.strip() + '=' * (-len(creds_b64.strip()) % 4)
         creds_json = base64.b64decode(creds_b64).decode("utf-8")
         creds_dict = json.loads(creds_json)
         scopes = [
@@ -70,8 +76,7 @@ def get_gspread_client():
         ]
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
-    else:
-        return gspread.service_account(filename="service_account.json")
+    raise Exception("No Google credentials found. Provide service_account.json or GOOGLE_CREDS_BASE64 env var.")
 
 # ========= RETRY LOGIC ==========
 def retry_request(method, url, max_retries=3, backoff=3, **kwargs):
