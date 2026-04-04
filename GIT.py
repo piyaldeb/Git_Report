@@ -244,18 +244,6 @@ def fetch_git(company_id, cname):
             def _product_code(line):
                 return (line.get("product_id") or {}).get("default_code", "") or ""
 
-            def _lines_info(po_lines):
-                # Only real product lines — skip Freight Charge, adjustments etc.
-                real = [l for l in po_lines if _product_code(l)]
-                names = [_product_name(l) for l in real]
-                codes = [_product_code(l) for l in real]
-                qty   = sum(l.get("qty_in_transit") or 0 for l in real)
-                return (
-                    ", ".join(filter(None, names)),
-                    ", ".join(filter(None, codes)),
-                    qty or "",
-                )
-
             base = {
                 "Company":         (record.get("company_id") or {}).get("display_name", ""),
                 "Inv Month":       inv_month,
@@ -280,27 +268,31 @@ def fetch_git(company_id, cname):
                 "I/H Status":      record.get("state") or "",
             }
 
+            def rows_for_po(p, po_lines):
+                po_fields = {
+                    "PO No":          p.get("name", "") if p else "",
+                    "PO Apprvd Stat": p.get("state", "") if p else "",
+                    "P Cat":          (p.get("itemtypes") or {}).get("display_name", "") if p else "",
+                    "P Type":         (p.get("po_type", "") or "") if p else "",
+                }
+                real = [l for l in po_lines if _product_code(l)]
+                if not real:
+                    return [{**base, **po_fields,
+                             "Item Details": "", "Odoo Code": "",
+                             "Inv Quantity": ""}]
+                return [{
+                    **base, **po_fields,
+                    "Item Details": _product_name(l),
+                    "Odoo Code":    _product_code(l),
+                    "Inv Quantity": l.get("qty_in_transit") or "",
+                } for l in real]
+
             if not pos:
-                details, codes, qty = _lines_info(lines)
-                return [{**base,
-                    "PO No": "", "PO Apprvd Stat": "", "P Cat": "", "P Type": "",
-                    "Item Details": details, "Odoo Code": codes, "Inv Quantity": qty,
-                }]
+                return rows_for_po(None, lines)
 
             rows = []
             for p in pos:
-                po_lines = lines_by_po.get(p["id"], [])
-                details, codes, qty = _lines_info(po_lines)
-                rows.append({
-                    **base,
-                    "PO No":          p.get("name", ""),
-                    "PO Apprvd Stat": p.get("state", ""),
-                    "P Cat":          (p.get("itemtypes") or {}).get("display_name", ""),
-                    "P Type":         p.get("po_type", "") or "",
-                    "Item Details":   details,
-                    "Odoo Code":      codes,
-                    "Inv Quantity":   qty,
-                })
+                rows.extend(rows_for_po(p, lines_by_po.get(p["id"], [])))
             return rows
 
         flattened = [row for rec in data for row in expand(rec)]
