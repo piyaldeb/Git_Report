@@ -274,6 +274,8 @@ if __name__ == "__main__":
         set_with_dataframe(worksheet, df)
         print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
     except Exception as e:
+        import traceback
         print(f"❌ Error while pasting to Google Sheets: {e}")
+        traceback.print_exc()
 
     print(f"✅ Done — {output_file}")
