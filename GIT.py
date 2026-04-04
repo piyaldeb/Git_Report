@@ -38,25 +38,15 @@ today = date.today()
 session = requests.Session()
 USER_ID = None
 
-# ========= LABEL MAPPING ==========
-LABELS = {
-    "name": "Transit Name",
-    "parent_id": "Parent",
-    "invoice_number": "Invoice Number",
-    "invoice_date": "Invoice Date",
-    "po_numbers": "PO Numbers",
-    "vendor": "Vendor",
-    "company_id": "Company",
-    "shipment_mode": "Shipment Mode",
-    "shipment_type": "Shipment Type",
-    "lc_number": "LC Number",
-    "bl_number": "BL Number",
-    "eta": "ETA",
-    "grn_date": "GRN Date",
-    "state": "State",
-    "subtotal": "Subtotal",
-    "create_uid": "Created By",
-}
+# ========= COLUMN ORDER ==========
+COLUMNS = [
+    "Company", "PO No", "PO Apprvd Stat", "P Cat", "P Type",
+    "Inv Month", "Vendor", "Item Details", "Inv No", "Inv Date",
+    "Inv Quantity", "Inv Value", "Adjust", "Pmt Term", "Ship Mode",
+    "Inco", "Booked Ship ETD", "Booked Ship ETA", "ETD", "ETA",
+    "BL Number", "BL Date", "LC Number", "LC Date",
+    "I/H Plan Month", "Inhoused Date", "I/H Status",
+]
 
 # ========= GOOGLE SHEETS CLIENT ==========
 def get_gspread_client():
@@ -155,22 +145,34 @@ def switch_company(company_id):
 # ========= FETCH GOODS IN TRANSIT ==========
 def fetch_git(company_id, cname):
     specification = {
-        "name": {},
-        "parent_id": {"fields": {"display_name": {}}},
+        "company_id": {"fields": {"display_name": {}}},
+        "po_numbers": {"fields": {
+            "name": {},
+            "state": {},
+            "itemtypes": {"fields": {"display_name": {}}},
+            "po_type": {},
+        }},
+        "vendor": {"fields": {"display_name": {}}},
+        "item_details": {},
         "invoice_number": {},
         "invoice_date": {},
-        "po_numbers": {"fields": {}},
-        "vendor": {"fields": {"display_name": {}}},
-        "company_id": {"fields": {"display_name": {}}},
+        "item_qty": {},
+        "subtotal": {},
+        "adjusted_state": {},
+        "payment_term": {"fields": {"display_name": {}}},
         "shipment_mode": {"fields": {"display_name": {}}},
-        "shipment_type": {},
-        "lc_number": {},
-        "bl_number": {},
+        "inco_terms": {"fields": {"display_name": {}}},
+        "booked_etd": {},
+        "booked_eta": {},
+        "etd": {},
         "eta": {},
+        "bl_number": {},
+        "bl_date": {},
+        "lc_number": {},
+        "lc_date": {},
+        "ih_plan": {},
         "grn_date": {},
         "state": {},
-        "subtotal": {},
-        "create_uid": {"fields": {"display_name": {}}},
     }
     payload = {
         "jsonrpc": "2.0",
@@ -207,15 +209,42 @@ def fetch_git(company_id, cname):
         data = r.json()["result"]["records"]
 
         def flatten(record):
-            flat = {}
-            for k, v in record.items():
-                label = LABELS.get(k, k)
-                if isinstance(v, dict) and "display_name" in v:
-                    flat[label] = v["display_name"]
-                elif isinstance(v, list):
-                    flat[label] = ", ".join(str(item.get("id", "")) for item in v) if v else ""
-                else:
-                    flat[label] = v
+            pos = record.get("po_numbers", [])
+            inv_date = record.get("invoice_date") or ""
+            try:
+                inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
+            except Exception:
+                inv_month = ""
+
+            flat = {
+                "Company":          (record.get("company_id") or {}).get("display_name", ""),
+                "PO No":            ", ".join(p.get("name", "") for p in pos),
+                "PO Apprvd Stat":   ", ".join(p.get("state", "") for p in pos),
+                "P Cat":            ", ".join((p.get("itemtypes") or {}).get("display_name", "") for p in pos),
+                "P Type":           ", ".join(p.get("po_type", "") or "" for p in pos),
+                "Inv Month":        inv_month,
+                "Vendor":           (record.get("vendor") or {}).get("display_name", ""),
+                "Item Details":     record.get("item_details") or "",
+                "Inv No":           record.get("invoice_number") or "",
+                "Inv Date":         inv_date,
+                "Inv Quantity":     record.get("item_qty") or "",
+                "Inv Value":        record.get("subtotal") or "",
+                "Adjust":           record.get("adjusted_state") or "",
+                "Pmt Term":         (record.get("payment_term") or {}).get("display_name", ""),
+                "Ship Mode":        (record.get("shipment_mode") or {}).get("display_name", ""),
+                "Inco":             (record.get("inco_terms") or {}).get("display_name", ""),
+                "Booked Ship ETD":  record.get("booked_etd") or "",
+                "Booked Ship ETA":  record.get("booked_eta") or "",
+                "ETD":              record.get("etd") or "",
+                "ETA":              record.get("eta") or "",
+                "BL Number":        record.get("bl_number") or "",
+                "BL Date":          record.get("bl_date") or "",
+                "LC Number":        record.get("lc_number") or "",
+                "LC Date":          record.get("lc_date") or "",
+                "I/H Plan Month":   record.get("ih_plan") or "",
+                "Inhoused Date":    record.get("grn_date") or "",
+                "I/H Status":       record.get("state") or "",
+            }
             return flat
 
         flattened = [flatten(rec) for rec in data]
@@ -239,7 +268,7 @@ if __name__ == "__main__":
         records = fetch_git(company_id, cname)
 
         if records:
-            df = pd.DataFrame(records)
+            df = pd.DataFrame(records, columns=COLUMNS)
             output_file = f"git_{today.isoformat()}.xlsx"
             df.to_excel(output_file, index=False)
             print(f"📂 Saved: {output_file}")
@@ -249,7 +278,7 @@ if __name__ == "__main__":
                 client = get_gspread_client()
                 sheet = client.open_by_key(SHEET_KEY)
                 worksheet = sheet.worksheet(WORKSHEET_NAME)
-                worksheet.batch_clear(["A:T"])
+                worksheet.batch_clear(["A:AA"])
                 set_with_dataframe(worksheet, df)
                 print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
             except Exception as e:
