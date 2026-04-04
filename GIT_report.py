@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 from requests.exceptions import RequestException
 from google.oauth2 import service_account
 import gspread
+from gspread_dataframe import set_with_dataframe
+import pandas as pd
 
 load_dotenv()
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -29,10 +31,47 @@ DB = os.getenv("ODOO_DB")
 USERNAME = os.getenv("ODOO_USERNAME")
 PASSWORD = os.getenv("ODOO_PASSWORD")
 
+SHEET_KEY = "1ho7ihCKKCzg7de9hvuesledI7tdCpWjOiz9-EFGgIuI"
+WORKSHEET_NAME = "GIT_REPORT_RAW"
+
 today = date.today()
 
 session = requests.Session()
 USER_ID = None
+
+# ========= GOOGLE SHEETS CLIENT ==========
+def get_gspread_client():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    for sa_path in [
+        os.path.join(script_dir, "service_account.json"),
+        "service_account.json",
+    ]:
+        if os.path.exists(sa_path):
+            return gspread.service_account(filename=sa_path)
+
+    creds_raw = os.getenv("GOOGLE_CREDS_BASE64")
+    if creds_raw:
+        creds_dict = None
+        try:
+            creds_dict = json.loads(creds_raw.strip())
+        except json.JSONDecodeError:
+            pass
+        if creds_dict is None:
+            try:
+                padded = creds_raw.strip() + '=' * (-len(creds_raw.strip()) % 4)
+                creds_dict = json.loads(base64.b64decode(padded).decode("utf-8"))
+            except Exception:
+                pass
+        if creds_dict is None:
+            raise Exception("GOOGLE_CREDS_BASE64 is neither valid JSON nor valid base64-encoded JSON")
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+
+    raise Exception("No Google credentials found. Place service_account.json in the script folder or set GOOGLE_CREDS_BASE64.")
 
 # ========= RETRY LOGIC ==========
 def retry_request(method, url, max_retries=3, backoff=3, **kwargs):
@@ -193,9 +232,17 @@ def download_report(action, wizard_id, company_id, csrf_token, output_path):
         print("Response snippet:", r.text[:300])
         raise Exception("❌ Response does not appear to be an xlsx file")
 
-    with open(output_path, "wb") as f:
-        f.write(r.content)
+    try:
+        with open(output_path, "wb") as f:
+            f.write(r.content)
+    except PermissionError:
+        base, ext = os.path.splitext(output_path)
+        output_path = f"{base}_new{ext}"
+        with open(output_path, "wb") as f:
+            f.write(r.content)
+        print(f"⚠️ Original file was locked — saved as: {output_path}")
     print(f"📂 Report saved: {output_path}")
+    return output_path
 
 # ========= MAIN ==========
 if __name__ == "__main__":
@@ -215,5 +262,18 @@ if __name__ == "__main__":
     action = trigger_report_action(wizard_id, company_id)
 
     output_file = f"git_report_{today.isoformat()}.xlsx"
-    download_report(action, wizard_id, company_id, csrf_token, output_file)
+    saved_path = download_report(action, wizard_id, company_id, csrf_token, output_file)
+
+    # ========= GOOGLE SHEETS ==========
+    try:
+        df = pd.read_excel(saved_path)
+        client = get_gspread_client()
+        sheet = client.open_by_key(SHEET_KEY)
+        worksheet = sheet.worksheet(WORKSHEET_NAME)
+        worksheet.batch_clear(["A:ZZ"])
+        set_with_dataframe(worksheet, df)
+        print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
+    except Exception as e:
+        print(f"❌ Error while pasting to Google Sheets: {e}")
+
     print(f"✅ Done — {output_file}")
