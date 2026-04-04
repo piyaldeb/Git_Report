@@ -41,7 +41,7 @@ USER_ID = None
 # ========= COLUMN ORDER ==========
 COLUMNS = [
     "Company", "PO No", "PO Apprvd Stat", "P Cat", "P Type",
-    "Inv Month", "Vendor", "Item Details", "Inv No", "Inv Date",
+    "Inv Month", "Vendor", "Item Details", "Odoo Code", "Inv No", "Inv Date",
     "Inv Quantity", "Inv Value", "Adjust", "Pmt Term", "Ship Mode",
     "Inco", "Booked Ship ETD", "Booked Ship ETA", "ETD", "ETA",
     "BL Number", "BL Date", "LC Number", "LC Date",
@@ -173,7 +173,11 @@ def fetch_git(company_id, cname):
         "ih_plan": {},
         "grn_date": {},
         "state": {},
-        "line_ids": {"fields": {"qty_in_transit": {}}},
+        "line_ids": {"fields": {
+            "po_id": {"fields": {}},
+            "product_id": {"fields": {"display_name": {}, "default_code": {}}},
+            "qty_in_transit": {},
+        }},
     }
     payload = {
         "jsonrpc": "2.0",
@@ -212,25 +216,52 @@ def fetch_git(company_id, cname):
         def expand(record):
             """Return one row per PO. If no POs, return one row with blank PO fields."""
             pos = record.get("po_numbers", []) or []
+            lines = record.get("line_ids") or []
             inv_date = record.get("invoice_date") or ""
             try:
                 inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
             except Exception:
                 inv_month = ""
 
-            inv_qty = sum(
-                (line.get("qty_in_transit") or 0)
-                for line in (record.get("line_ids") or [])
-            ) or ""
+            # Group lines by po_id for per-PO item details
+            from collections import defaultdict
+            lines_by_po = defaultdict(list)
+            lines_no_po = []
+            for line in lines:
+                po_id = (line.get("po_id") or {}).get("id")
+                if po_id:
+                    lines_by_po[po_id].append(line)
+                else:
+                    lines_no_po.append(line)
+
+            def _product_name(line):
+                dn = (line.get("product_id") or {}).get("display_name", "")
+                # display_name format: "[CODE] Name" — strip the code prefix
+                if dn.startswith("[") and "]" in dn:
+                    return dn[dn.index("]") + 2:]
+                return dn
+
+            def _product_code(line):
+                return (line.get("product_id") or {}).get("default_code", "") or ""
+
+            def _lines_info(po_lines):
+                # Only real product lines — skip Freight Charge, adjustments etc.
+                real = [l for l in po_lines if _product_code(l)]
+                names = [_product_name(l) for l in real]
+                codes = [_product_code(l) for l in real]
+                qty   = sum(l.get("qty_in_transit") or 0 for l in real)
+                return (
+                    ", ".join(filter(None, names)),
+                    ", ".join(filter(None, codes)),
+                    qty or "",
+                )
 
             base = {
                 "Company":         (record.get("company_id") or {}).get("display_name", ""),
                 "Inv Month":       inv_month,
                 "Vendor":          (record.get("vendor") or {}).get("display_name", ""),
-                "Item Details":    record.get("item_details") or "",
                 "Inv No":          record.get("invoice_number") or "",
                 "Inv Date":        inv_date,
-                "Inv Quantity":    inv_qty,
                 "Inv Value":       record.get("subtotal") or "",
                 "Adjust":          record.get("adjusted_state") or "",
                 "Pmt Term":        (record.get("payment_term") or {}).get("display_name", ""),
@@ -250,16 +281,25 @@ def fetch_git(company_id, cname):
             }
 
             if not pos:
-                return [{**base, "PO No": "", "PO Apprvd Stat": "", "P Cat": "", "P Type": ""}]
+                details, codes, qty = _lines_info(lines)
+                return [{**base,
+                    "PO No": "", "PO Apprvd Stat": "", "P Cat": "", "P Type": "",
+                    "Item Details": details, "Odoo Code": codes, "Inv Quantity": qty,
+                }]
 
             rows = []
             for p in pos:
+                po_lines = lines_by_po.get(p["id"], [])
+                details, codes, qty = _lines_info(po_lines)
                 rows.append({
                     **base,
                     "PO No":          p.get("name", ""),
                     "PO Apprvd Stat": p.get("state", ""),
                     "P Cat":          (p.get("itemtypes") or {}).get("display_name", ""),
                     "P Type":         p.get("po_type", "") or "",
+                    "Item Details":   details,
+                    "Odoo Code":      codes,
+                    "Inv Quantity":   qty,
                 })
             return rows
 
