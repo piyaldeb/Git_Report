@@ -209,15 +209,9 @@ def fetch_git(company_id, cname):
     try:
         data = r.json()["result"]["records"]
 
-        def _unique(values):
-            seen = []
-            for v in values:
-                if v and v not in seen:
-                    seen.append(v)
-            return ", ".join(seen)
-
-        def flatten(record):
-            pos = record.get("po_numbers", [])
+        def expand(record):
+            """Return one row per PO. If no POs, return one row with blank PO fields."""
+            pos = record.get("po_numbers", []) or []
             inv_date = record.get("invoice_date") or ""
             try:
                 inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
@@ -229,38 +223,47 @@ def fetch_git(company_id, cname):
                 for line in (record.get("line_ids") or [])
             ) or ""
 
-            flat = {
-                "Company":          (record.get("company_id") or {}).get("display_name", ""),
-                "PO No":            _unique(p.get("name", "") for p in pos),
-                "PO Apprvd Stat":   _unique(p.get("state", "") for p in pos),
-                "P Cat":            _unique((p.get("itemtypes") or {}).get("display_name", "") for p in pos),
-                "P Type":           _unique(p.get("po_type", "") or "" for p in pos),
-                "Inv Month":        inv_month,
-                "Vendor":           (record.get("vendor") or {}).get("display_name", ""),
-                "Item Details":     record.get("item_details") or "",
-                "Inv No":           record.get("invoice_number") or "",
-                "Inv Date":         inv_date,
-                "Inv Quantity":     inv_qty,
-                "Inv Value":        record.get("subtotal") or "",
-                "Adjust":           record.get("adjusted_state") or "",
-                "Pmt Term":         (record.get("payment_term") or {}).get("display_name", ""),
-                "Ship Mode":        (record.get("shipment_mode") or {}).get("display_name", ""),
-                "Inco":             (record.get("inco_terms") or {}).get("display_name", ""),
-                "Booked Ship ETD":  record.get("booked_etd") or "",
-                "Booked Ship ETA":  record.get("booked_eta") or "",
-                "ETD":              record.get("etd") or "",
-                "ETA":              record.get("eta") or "",
-                "BL Number":        record.get("bl_number") or "",
-                "BL Date":          record.get("bl_date") or "",
-                "LC Number":        record.get("lc_number") or "",
-                "LC Date":          record.get("lc_date") or "",
-                "I/H Plan Month":   record.get("ih_plan") or "",
-                "Inhoused Date":    record.get("grn_date") or "",
-                "I/H Status":       record.get("state") or "",
+            base = {
+                "Company":         (record.get("company_id") or {}).get("display_name", ""),
+                "Inv Month":       inv_month,
+                "Vendor":          (record.get("vendor") or {}).get("display_name", ""),
+                "Item Details":    record.get("item_details") or "",
+                "Inv No":          record.get("invoice_number") or "",
+                "Inv Date":        inv_date,
+                "Inv Quantity":    inv_qty,
+                "Inv Value":       record.get("subtotal") or "",
+                "Adjust":          record.get("adjusted_state") or "",
+                "Pmt Term":        (record.get("payment_term") or {}).get("display_name", ""),
+                "Ship Mode":       (record.get("shipment_mode") or {}).get("display_name", ""),
+                "Inco":            (record.get("inco_terms") or {}).get("display_name", ""),
+                "Booked Ship ETD": record.get("booked_etd") or "",
+                "Booked Ship ETA": record.get("booked_eta") or "",
+                "ETD":             record.get("etd") or "",
+                "ETA":             record.get("eta") or "",
+                "BL Number":       record.get("bl_number") or "",
+                "BL Date":         record.get("bl_date") or "",
+                "LC Number":       record.get("lc_number") or "",
+                "LC Date":         record.get("lc_date") or "",
+                "I/H Plan Month":  record.get("ih_plan") or "",
+                "Inhoused Date":   record.get("grn_date") or "",
+                "I/H Status":      record.get("state") or "",
             }
-            return flat
 
-        flattened = [flatten(rec) for rec in data]
+            if not pos:
+                return [{**base, "PO No": "", "PO Apprvd Stat": "", "P Cat": "", "P Type": ""}]
+
+            rows = []
+            for p in pos:
+                rows.append({
+                    **base,
+                    "PO No":          p.get("name", ""),
+                    "PO Apprvd Stat": p.get("state", ""),
+                    "P Cat":          (p.get("itemtypes") or {}).get("display_name", ""),
+                    "P Type":         p.get("po_type", "") or "",
+                })
+            return rows
+
+        flattened = [row for rec in data for row in expand(rec)]
         print(f"📊 {cname}: {len(flattened)} GIT rows fetched")
         return flattened
     except Exception as e:
