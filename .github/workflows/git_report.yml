@@ -2,7 +2,7 @@ name: GIT Report
 
 on:
   schedule:
-    - cron: '0 */3 * * *'   # Every 3 hours
+    - cron: '0 2,5,9 * * *'   # Runs at 8:00 AM, 11:00 AM, 3:00 PM BDT (2:00 AM, 5:00 AM, 9:00 AM UTC)
   workflow_dispatch:          # Allow manual trigger from GitHub UI
 
 jobs:
