@@ -173,6 +173,7 @@ def fetch_git(company_id, cname):
         "ih_plan": {},
         "grn_date": {},
         "state": {},
+        "line_ids": {"fields": {"qty_in_transit": {}}},
     }
     payload = {
         "jsonrpc": "2.0",
@@ -208,6 +209,13 @@ def fetch_git(company_id, cname):
     try:
         data = r.json()["result"]["records"]
 
+        def _unique(values):
+            seen = []
+            for v in values:
+                if v and v not in seen:
+                    seen.append(v)
+            return ", ".join(seen)
+
         def flatten(record):
             pos = record.get("po_numbers", [])
             inv_date = record.get("invoice_date") or ""
@@ -216,18 +224,23 @@ def fetch_git(company_id, cname):
             except Exception:
                 inv_month = ""
 
+            inv_qty = sum(
+                (line.get("qty_in_transit") or 0)
+                for line in (record.get("line_ids") or [])
+            ) or ""
+
             flat = {
                 "Company":          (record.get("company_id") or {}).get("display_name", ""),
-                "PO No":            ", ".join(p.get("name", "") for p in pos),
-                "PO Apprvd Stat":   ", ".join(p.get("state", "") for p in pos),
-                "P Cat":            ", ".join((p.get("itemtypes") or {}).get("display_name", "") for p in pos),
-                "P Type":           ", ".join(p.get("po_type", "") or "" for p in pos),
+                "PO No":            _unique(p.get("name", "") for p in pos),
+                "PO Apprvd Stat":   _unique(p.get("state", "") for p in pos),
+                "P Cat":            _unique((p.get("itemtypes") or {}).get("display_name", "") for p in pos),
+                "P Type":           _unique(p.get("po_type", "") or "" for p in pos),
                 "Inv Month":        inv_month,
                 "Vendor":           (record.get("vendor") or {}).get("display_name", ""),
                 "Item Details":     record.get("item_details") or "",
                 "Inv No":           record.get("invoice_number") or "",
                 "Inv Date":         inv_date,
-                "Inv Quantity":     record.get("item_qty") or "",
+                "Inv Quantity":     inv_qty,
                 "Inv Value":        record.get("subtotal") or "",
                 "Adjust":           record.get("adjusted_state") or "",
                 "Pmt Term":         (record.get("payment_term") or {}).get("display_name", ""),
