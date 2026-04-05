@@ -202,58 +202,46 @@ def fetch_git(company_id, cname):
         print(r.text[:200])
         return []
 
-    def expand(record):
-        pos = record.get("po_numbers", []) or []
-
-        inv_date = record.get("invoice_date") or ""
+    def map_record(rec):
+        inv_date = rec.get("invoice_date") or ""
         try:
             inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
         except Exception:
             inv_month = ""
-
-        base = {
-            "Company":         (record.get("company_id") or {}).get("display_name", ""),
+        pos = rec.get("po_numbers", []) or []
+        return {
+            "Company":         (rec.get("company_id") or {}).get("display_name", ""),
+            "PO No":           ", ".join(p.get("name", "") for p in pos),
+            "PO Apprvd Stat":  ", ".join(p.get("state", "") for p in pos),
+            "P Cat":           ", ".join((p.get("itemtypes") or {}).get("display_name", "") for p in pos),
+            "P Type":          ", ".join(p.get("po_type", "") or "" for p in pos),
             "Inv Month":       inv_month,
-            "Vendor":          (record.get("vendor") or {}).get("display_name", ""),
-            "Inv No":          record.get("invoice_number") or "",
+            "Vendor":          (rec.get("vendor") or {}).get("display_name", ""),
+            "Item Details":    "",
+            "Odoo Code":       "",
+            "Inv No":          rec.get("invoice_number") or "",
             "Inv Date":        inv_date,
-            "Inv Value":       record.get("subtotal") if record.get("subtotal") not in (None, False) else "",
-            "Adjust":          record.get("adjusted_state") or "",
-            "Pmt Term":        (record.get("payment_term") or {}).get("display_name", ""),
-            "Ship Mode":       (record.get("shipment_mode") or {}).get("display_name", ""),
-            "Inco":            (record.get("inco_terms") or {}).get("display_name", ""),
-            "Booked Ship ETD": record.get("booked_etd") or "",
-            "Booked Ship ETA": record.get("booked_eta") or "",
-            "ETD":             record.get("etd") or "",
-            "ETA":             record.get("eta") or "",
-            "BL Number":       record.get("bl_number") or "",
-            "BL Date":         record.get("bl_date") or "",
-            "LC Number":       record.get("lc_number") or "",
-            "LC Date":         record.get("lc_date") or "",
-            "I/H Plan Month":  record.get("ih_plan") or "",
-            "Inhoused Date":   record.get("grn_date") or "",
-            "I/H Status":      record.get("state") or "",
+            "Inv Quantity":    "",
+            "Inv Value":       rec.get("subtotal") if rec.get("subtotal") not in (None, False) else "",
+            "Adjust":          rec.get("adjusted_state") or "",
+            "Pmt Term":        (rec.get("payment_term") or {}).get("display_name", ""),
+            "Ship Mode":       (rec.get("shipment_mode") or {}).get("display_name", ""),
+            "Inco":            (rec.get("inco_terms") or {}).get("display_name", ""),
+            "Booked Ship ETD": rec.get("booked_etd") or "",
+            "Booked Ship ETA": rec.get("booked_eta") or "",
+            "ETD":             rec.get("etd") or "",
+            "ETA":             rec.get("eta") or "",
+            "BL Number":       rec.get("bl_number") or "",
+            "BL Date":         rec.get("bl_date") or "",
+            "LC Number":       rec.get("lc_number") or "",
+            "LC Date":         rec.get("lc_date") or "",
+            "I/H Plan Month":  rec.get("ih_plan") or "",
+            "Inhoused Date":   rec.get("grn_date") or "",
+            "I/H Status":      rec.get("state") or "",
         }
 
-        def row_for_po(p):
-            return {
-                **base,
-                "PO No":          p.get("name", "") if p else "",
-                "PO Apprvd Stat": p.get("state", "") if p else "",
-                "P Cat":          (p.get("itemtypes") or {}).get("display_name", "") if p else "",
-                "P Type":         (p.get("po_type") or "") if p else "",
-                "Item Details":   "",
-                "Odoo Code":      "",
-                "Inv Quantity":   "",
-            }
-
-        if not pos:
-            return [row_for_po(None)]
-
-        return [row_for_po(p) for p in pos]
-
-    all_rows = [row for rec in data for row in expand(rec)]
-    print(f"📊 {cname}: {len(all_rows)} rows expanded from {len(data)} transit records")
+    all_rows = [map_record(rec) for rec in data]
+    print(f"📊 {cname}: {len(all_rows)} rows from {len(data)} transit records")
 
     # ---- coverage check ----
     df_check = pd.DataFrame(all_rows, columns=COLUMNS)
