@@ -305,8 +305,8 @@ if __name__ == "__main__":
     userinfo = login()
     print("User info (allowed companies):", userinfo.get("user_companies", {}))
 
-    company_id = 1
-    cname = "Zipper"
+    company_id = 3
+    cname = "Metal Trims"
 
     if switch_company(company_id):
         records = fetch_details(company_id, cname)
