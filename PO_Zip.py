@@ -40,10 +40,20 @@ USER_ID = None
 
 # ========= COLUMN ORDER ==========
 COLUMNS = [
-    "Company", "Created by", "Created on", "Currency", "Gate Entry",
+    "Company", "Created by", "Created on", "Currency.", "Gate Entry",
     "Last Approver", "Next Approver", "Order Reference", "Order Status",
     "PI No.", "Priority", "Status", "Total", "Vendor", "Vendor Reference",
 ]
+
+PRIORITY_MAP = {"0": "Normal", "1": "Urgent"}
+STATE_MAP = {
+    "draft":      "RFQ",
+    "sent":       "RFQ Sent",
+    "to approve": "To Approve",
+    "purchase":   "Purchase Order",
+    "done":       "Locked",
+    "cancel":     "Cancelled",
+}
 
 # ========= GOOGLE SHEETS CLIENT ==========
 def get_gspread_client():
@@ -159,7 +169,7 @@ def fetch_po(company_id, cname):
                 "specification": specification,
                 "offset": 0,
                 "order": "create_date DESC",
-                "limit": 10000,
+                "limit": 15000,
                 "context": {
                     "lang": "en_US",
                     "tz": "Asia/Dhaka",
@@ -188,21 +198,23 @@ def fetch_po(company_id, cname):
         return []
 
     def map_record(rec):
+        gate = rec.get("x_studio_gate_entry")
+        total = rec.get("amount_total")
         return {
-            "Company":         (rec.get("company_id") or {}).get("display_name", ""),
-            "Created by":      (rec.get("create_uid") or {}).get("display_name", ""),
-            "Created on":      rec.get("create_date") or "",
-            "Currency":        (rec.get("x_studio_currency") or {}).get("display_name", ""),
-            "Gate Entry":      rec.get("x_studio_gate_entry") or "",
-            "Last Approver":   rec.get("last_approver") or "",
-            "Next Approver":   rec.get("next_approver") or "",
-            "Order Reference": rec.get("name") or "",
-            "Order Status":    rec.get("x_studio_order_status") or "",
-            "PI No.":          rec.get("x_studio_pi_no") or "",
-            "Priority":        rec.get("priority") or "",
-            "Status":          rec.get("state") or "",
-            "Total":           rec.get("amount_total") if rec.get("amount_total") not in (None, False) else "",
-            "Vendor":          (rec.get("partner_id") or {}).get("display_name", ""),
+            "Company":          (rec.get("company_id") or {}).get("display_name", ""),
+            "Created by":       (rec.get("create_uid") or {}).get("display_name", ""),
+            "Created on":       rec.get("create_date") or "",
+            "Currency.":        (rec.get("x_studio_currency") or {}).get("display_name", ""),
+            "Gate Entry":       gate if gate not in (None, False) else "",
+            "Last Approver":    rec.get("last_approver") or "",
+            "Next Approver":    rec.get("next_approver") or "",
+            "Order Reference":  rec.get("name") or "",
+            "Order Status":     rec.get("x_studio_order_status") or "",
+            "PI No.":           rec.get("x_studio_pi_no") or "",
+            "Priority":         PRIORITY_MAP.get(str(rec.get("priority") or ""), rec.get("priority") or ""),
+            "Status":           STATE_MAP.get(rec.get("state") or "", rec.get("state") or ""),
+            "Total":            total if total is not None else "",
+            "Vendor":           (rec.get("partner_id") or {}).get("display_name", ""),
             "Vendor Reference": rec.get("partner_ref") or "",
         }
 
