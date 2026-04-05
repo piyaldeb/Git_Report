@@ -39,10 +39,12 @@ USER_ID = None
 
 # ========= COLUMN ORDER ==========
 COLUMNS = [
-    "Invoice Date", "Invoice Number", "Item Category", "LC Number", "Po",
-    "PO Qty Total", "Product", "Qty In Transit", "Qty Remaining",
-    "Shipment Mode", "Shipment Type", "Subtotal", "Transit Status",
-    "Transit Vendor", "Unit Price",
+    "Company", "PO No", "PO Apprvd Stat", "P Cat", "P Type",
+    "Inv Month", "Vendor", "Item Details", "Odoo Code", "Inv No", "Inv Date",
+    "Inv Quantity", "Inv Value", "Adjust", "Pmt Term", "Ship Mode",
+    "Inco", "Booked Ship ETD", "Booked Ship ETA", "ETD", "ETA",
+    "BL Number", "BL Date", "LC Number", "LC Date",
+    "I/H Plan Month", "Inhoused Date", "I/H Status",
 ]
 
 # ========= GOOGLE SHEETS CLIENT ==========
@@ -131,22 +133,27 @@ def switch_company(company_id):
 
 # ========= FETCH TRANSIT LINES ==========
 def fetch_po_details(company_id, cname):
-    specification = {
-        "invoice_date":   {},
-        "invoice_number": {},
-        "item_category":  {"fields": {"display_name": {}}},
-        "lc_number":      {},
+    ctx = {
+        "lang": "en_US", "tz": "Asia/Dhaka", "uid": USER_ID,
+        "allowed_company_ids": [company_id], "bin_size": True,
+        "current_company_id": company_id,
+    }
+
+    # Step 1: Fetch transit.line records (po_id only display_name — deeper fields blocked by ACL)
+    line_spec = {
+        "transit_id":     {},
         "po_id":          {"fields": {"display_name": {}}},
-        "qty_total":      {},
+        "invoice_number": {},
+        "invoice_date":   {},
+        "vendor_main":    {"fields": {"display_name": {}}},
         "product_id":     {"fields": {"display_name": {}}},
         "qty_in_transit": {},
-        "qty_remaining":  {},
-        "shipment_mode":  {"fields": {"display_name": {}}},
-        "shipment_type":  {},
         "subtotal":       {},
+        "shipment_mode":  {"fields": {"display_name": {}}},
+        "bl_number":      {},
+        "lc_number":      {},
+        "eta":            {},
         "state":          {},
-        "vendor_main":    {"fields": {"display_name": {}}},
-        "price_unit":     {},
     }
     payload = {
         "jsonrpc": "2.0",
@@ -156,18 +163,11 @@ def fetch_po_details(company_id, cname):
             "method": "web_search_read",
             "args": [],
             "kwargs": {
-                "specification": specification,
+                "specification": line_spec,
                 "offset": 0,
                 "order": "invoice_date DESC",
                 "limit": 10000,
-                "context": {
-                    "lang": "en_US",
-                    "tz": "Asia/Dhaka",
-                    "uid": USER_ID,
-                    "allowed_company_ids": [company_id],
-                    "bin_size": True,
-                    "current_company_id": company_id,
-                },
+                "context": ctx,
                 "count_limit": 100001,
                 "domain": [],
             },
@@ -187,23 +187,138 @@ def fetch_po_details(company_id, cname):
         print(r.text[:2000])
         return []
 
+    print(f"📋 {cname}: {len(data)} transit lines fetched")
+
+    # Step 2: Fetch purchase.order records for PO Apprvd Stat / P Cat / P Type
+    po_ids = list({(rec.get("po_id") or {}).get("id") for rec in data if (rec.get("po_id") or {}).get("id")})
+    po_map = {}
+    if po_ids:
+        po_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "purchase.order",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "display_name": {},
+                        "state":        {},
+                        "itemtypes":    {"fields": {"display_name": {}}},
+                        "po_type":      {},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(po_ids) + 10,
+                    "context": ctx,
+                    "count_limit": 100001,
+                    "domain": [["id", "in", po_ids]],
+                },
+            },
+        }
+        pr = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_kw/purchase.order/web_search_read", json=po_payload)
+        for p in pr.json().get("result", {}).get("records", []):
+            po_map[p["id"]] = p
+        print(f"📋 {cname}: {len(po_map)} purchase orders fetched")
+
+    # Step 3: Fetch transit.model header records for remaining fields
+    def _tid(rec):
+        t = rec.get("transit_id")
+        if isinstance(t, dict):
+            return t.get("id")
+        return t if t else None
+
+    transit_ids = list({_tid(rec) for rec in data if _tid(rec)})
+    transit_map = {}
+    if transit_ids:
+        hdr_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "transit.model",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "company_id":     {"fields": {"display_name": {}}},
+                        "adjusted_state": {},
+                        "payment_term":   {"fields": {"display_name": {}}},
+                        "inco_terms":     {"fields": {"display_name": {}}},
+                        "booked_etd":     {},
+                        "booked_eta":     {},
+                        "etd":            {},
+                        "bl_date":        {},
+                        "lc_date":        {},
+                        "ih_plan":        {},
+                        "grn_date":       {},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(transit_ids) + 10,
+                    "context": ctx,
+                    "count_limit": 100001,
+                    "domain": [["id", "in", transit_ids]],
+                },
+            },
+        }
+        hr = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_kw/transit.model/web_search_read", json=hdr_payload)
+        for h in hr.json().get("result", {}).get("records", []):
+            transit_map[h["id"]] = h
+        print(f"📋 {cname}: {len(transit_map)} transit headers fetched")
+
     def map_record(rec):
+        inv_date = rec.get("invoice_date") or ""
+        try:
+            inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
+        except Exception:
+            inv_month = ""
+
+        po_ref = rec.get("po_id") or {}
+        po = po_map.get(po_ref.get("id"), {})
+        product = rec.get("product_id") or {}
+        tid = _tid(rec)
+        transit = transit_map.get(tid, {})
+
+        dn = product.get("display_name", "") or ""
+        if dn.startswith("[") and "]" in dn:
+            odoo_code = dn[1:dn.index("]")]
+            item_details = dn[dn.index("]") + 2:]
+        else:
+            odoo_code = ""
+            item_details = dn
+
+        subtotal = rec.get("subtotal")
+        qty = rec.get("qty_in_transit")
+
         return {
-            "Invoice Date":   rec.get("invoice_date") or "",
-            "Invoice Number": rec.get("invoice_number") or "",
-            "Item Category":  (rec.get("item_category") or {}).get("display_name", ""),
-            "LC Number":      rec.get("lc_number") or "",
-            "Po":             (rec.get("po_id") or {}).get("display_name", ""),
-            "PO Qty Total":   rec.get("qty_total") if rec.get("qty_total") is not None else "",
-            "Product":        (rec.get("product_id") or {}).get("display_name", ""),
-            "Qty In Transit": rec.get("qty_in_transit") if rec.get("qty_in_transit") is not None else "",
-            "Qty Remaining":  rec.get("qty_remaining") if rec.get("qty_remaining") is not None else "",
-            "Shipment Mode":  (rec.get("shipment_mode") or {}).get("display_name", ""),
-            "Shipment Type":  rec.get("shipment_type") or "",
-            "Subtotal":       rec.get("subtotal") if rec.get("subtotal") is not None else "",
-            "Transit Status": rec.get("state") or "",
-            "Transit Vendor": (rec.get("vendor_main") or {}).get("display_name", ""),
-            "Unit Price":     rec.get("price_unit") if rec.get("price_unit") is not None else "",
+            "Company":         (transit.get("company_id") or {}).get("display_name", ""),
+            "PO No":           po_ref.get("display_name", ""),
+            "PO Apprvd Stat":  po.get("state", ""),
+            "P Cat":           (po.get("itemtypes") or {}).get("display_name", ""),
+            "P Type":          po.get("po_type", "") or "",
+            "Inv Month":       inv_month,
+            "Vendor":          (rec.get("vendor_main") or {}).get("display_name", ""),
+            "Item Details":    item_details,
+            "Odoo Code":       odoo_code,
+            "Inv No":          rec.get("invoice_number") or "",
+            "Inv Date":        inv_date,
+            "Inv Quantity":    qty if qty is not None else "",
+            "Inv Value":       subtotal if subtotal is not None else "",
+            "Adjust":          transit.get("adjusted_state") or "",
+            "Pmt Term":        (transit.get("payment_term") or {}).get("display_name", ""),
+            "Ship Mode":       (rec.get("shipment_mode") or {}).get("display_name", ""),
+            "Inco":            (transit.get("inco_terms") or {}).get("display_name", ""),
+            "Booked Ship ETD": transit.get("booked_etd") or "",
+            "Booked Ship ETA": transit.get("booked_eta") or "",
+            "ETD":             transit.get("etd") or "",
+            "ETA":             rec.get("eta") or "",
+            "BL Number":       rec.get("bl_number") or "",
+            "BL Date":         transit.get("bl_date") or "",
+            "LC Number":       rec.get("lc_number") or "",
+            "LC Date":         transit.get("lc_date") or "",
+            "I/H Plan Month":  transit.get("ih_plan") or "",
+            "Inhoused Date":   transit.get("grn_date") or "",
+            "I/H Status":      rec.get("state") or "",
         }
 
     all_rows = [map_record(rec) for rec in data]
@@ -244,7 +359,7 @@ if __name__ == "__main__":
                 client = get_gspread_client()
                 sheet = client.open_by_key(SHEET_KEY)
                 worksheet = sheet.worksheet(WORKSHEET_NAME)
-                worksheet.batch_clear(["A:O"])
+                worksheet.batch_clear(["A:AB"])
                 set_with_dataframe(worksheet, df)
                 print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
             except Exception as e:
