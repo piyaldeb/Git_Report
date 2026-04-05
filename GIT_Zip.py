@@ -325,7 +325,7 @@ if __name__ == "__main__":
             try:
                 client = get_gspread_client()
                 sheet = client.open_by_key(SHEET_KEY)
-                worksheet = sheet.worksheet(WORKSHEET_NAME)
+                worksheet = sheet.get_worksheet_by_id(440183221)
                 worksheet.batch_clear(["A:AD"])
                 set_with_dataframe(worksheet, df)
                 print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
