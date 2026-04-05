@@ -162,11 +162,6 @@ def fetch_git(company_id, cname):
         "ih_plan":       {},
         "grn_date":      {},
         "state":         {},
-        "line_ids":      {"fields": {
-            "po_id":     {"fields": {}},
-            "product_id":{"fields": {"display_name": {}, "default_code": {}}},
-            "qty_in_transit": {},
-        }},
     }
     payload = {
         "jsonrpc": "2.0",
@@ -207,34 +202,14 @@ def fetch_git(company_id, cname):
         print(r.text[:200])
         return []
 
-    def _product_name(line):
-        dn = (line.get("product_id") or {}).get("display_name", "") or ""
-        if dn.startswith("[") and "]" in dn:
-            return dn[dn.index("]") + 2:]
-        return dn
-
-    def _product_code(line):
-        return (line.get("product_id") or {}).get("default_code", "") or ""
-
     def expand(record):
-        pos   = record.get("po_numbers", []) or []
-        lines = record.get("line_ids", []) or []
+        pos = record.get("po_numbers", []) or []
 
         inv_date = record.get("invoice_date") or ""
         try:
             inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
         except Exception:
             inv_month = ""
-
-        # Group lines by po_id
-        lines_by_po = defaultdict(list)
-        lines_no_po = []
-        for line in lines:
-            po_id = (line.get("po_id") or {}).get("id")
-            if po_id:
-                lines_by_po[po_id].append(line)
-            else:
-                lines_no_po.append(line)
 
         base = {
             "Company":         (record.get("company_id") or {}).get("display_name", ""),
@@ -260,32 +235,22 @@ def fetch_git(company_id, cname):
             "I/H Status":      record.get("state") or "",
         }
 
-        def rows_for_po(p, po_lines):
-            po_fields = {
+        def row_for_po(p):
+            return {
+                **base,
                 "PO No":          p.get("name", "") if p else "",
                 "PO Apprvd Stat": p.get("state", "") if p else "",
                 "P Cat":          (p.get("itemtypes") or {}).get("display_name", "") if p else "",
                 "P Type":         (p.get("po_type") or "") if p else "",
+                "Item Details":   "",
+                "Odoo Code":      "",
+                "Inv Quantity":   "",
             }
-            # Only real product lines (have a default_code)
-            real = [l for l in po_lines if _product_code(l)]
-            if not real:
-                return [{**base, **po_fields,
-                         "Item Details": "", "Odoo Code": "", "Inv Quantity": ""}]
-            return [{
-                **base, **po_fields,
-                "Item Details": _product_name(l),
-                "Odoo Code":    _product_code(l),
-                "Inv Quantity": l.get("qty_in_transit") if l.get("qty_in_transit") not in (None, False) else "",
-            } for l in real]
 
         if not pos:
-            return rows_for_po(None, lines)
+            return [row_for_po(None)]
 
-        rows = []
-        for p in pos:
-            rows.extend(rows_for_po(p, lines_by_po.get(p["id"], [])))
-        return rows
+        return [row_for_po(p) for p in pos]
 
     all_rows = [row for rec in data for row in expand(rec)]
     print(f"📊 {cname}: {len(all_rows)} rows expanded from {len(data)} transit records")
