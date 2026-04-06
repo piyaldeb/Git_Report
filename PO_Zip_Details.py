@@ -37,6 +37,16 @@ today = date.today()
 session = requests.Session()
 USER_ID = None
 
+# ========= MAPPINGS ==========
+STATE_MAP = {
+    "draft":      "Draft",
+    "sent":       "RFQ Sent",
+    "to approve": "To Approve",
+    "purchase":   "Approved",
+    "done":       "Locked",
+    "cancel":     "Cancelled",
+}
+
 # ========= COLUMN ORDER ==========
 COLUMNS = [
     "BU", "PO No", "PO Apprvd Stat", "P Cat", "P Type",
@@ -294,7 +304,7 @@ def fetch_po_zip_details(company_id, cname):
         return {
             "BU":              (transit.get("company_id") or {}).get("display_name", ""),
             "PO No":           po.get("name", "") or po_ref.get("display_name", ""),
-            "PO Apprvd Stat":  po.get("state", ""),
+            "PO Apprvd Stat":  STATE_MAP.get(po.get("state", ""), po.get("state", "")),
             "P Cat":           (po.get("itemtypes") or {}).get("display_name", ""),
             "P Type":          po.get("po_type", "") or "",
             "Inv Month":       inv_month,
