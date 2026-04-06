@@ -140,8 +140,7 @@ def fetch_git(company_id, cname):
         "po_numbers":    {"fields": {
             "name":      {},
             "state":     {},
-            "itemtypes": {"fields": {"display_name": {}}},
-            "po_type":   {},
+            "next_approver": {"fields": {"display_name": {}}},
         }},
         "vendor":        {"fields": {"display_name": {}}},
         "invoice_number": {},
@@ -207,6 +206,8 @@ def fetch_git(company_id, cname):
         print(r.text[:200])
         return []
 
+    print(f"📊 {cname}: {len(data)} transit records fetched")
+
     def _product_name(line):
         dn = (line.get("product_id") or {}).get("display_name", "") or ""
         if dn.startswith("[") and "]" in dn:
@@ -215,6 +216,62 @@ def fetch_git(company_id, cname):
 
     def _product_code(line):
         return (line.get("product_id") or {}).get("default_code", "") or ""
+
+    # ---- Batch-fetch P Cat / P Type from product.template by Odoo code ----
+    all_codes = list({_product_code(l) for rec in data for l in (rec.get("line_ids") or []) if _product_code(l)})
+    product_map = {}
+    chunk_size = 500
+    for i in range(0, len(all_codes), chunk_size):
+        chunk = all_codes[i:i + chunk_size]
+        prod_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "product.template",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "default_code":      {},
+                        "categ_type":        {"fields": {"display_name": {}}},
+                        "classification_id": {"fields": {"display_name": {}}},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(chunk) + 10,
+                    "context": {
+                        "lang": "en_US",
+                        "tz": "Asia/Dhaka",
+                        "uid": USER_ID,
+                        "allowed_company_ids": [company_id],
+                    },
+                    "count_limit": 100001,
+                    "domain": [["default_code", "in", chunk]],
+                },
+            },
+        }
+        pr = retry_request(
+            session.post,
+            f"{ODOO_URL}/web/dataset/call_kw/product.template/web_search_read",
+            json=prod_payload,
+        )
+        for rec in pr.json().get("result", {}).get("records", []):
+            code = rec.get("default_code") or ""
+            if code:
+                product_map[code] = {
+                    "P Cat":  (rec.get("categ_type") or {}).get("display_name", ""),
+                    "P Type": (rec.get("classification_id") or {}).get("display_name", ""),
+                }
+    print(f"📦 {cname}: {len(product_map)} products mapped (P Cat / P Type)")
+
+    STATE_MAP = {
+        "draft":      "Draft",
+        "sent":       "RFQ Sent",
+        "to approve": "To Approve",
+        "purchase":   "Approved",
+        "done":       "Locked",
+        "cancel":     "Cancelled",
+    }
 
     def expand(record):
         pos   = record.get("po_numbers", []) or []
@@ -260,24 +317,42 @@ def fetch_git(company_id, cname):
             "I/H Status":      record.get("state") or "",
         }
 
+        def _po_apprvd_stat(p):
+            if not p:
+                return ""
+            state = p.get("state", "")
+            if state in ("purchase", "cancel", "done", ""):
+                return STATE_MAP.get(state, state)
+            return (
+                (p.get("next_approver") or {}).get("display_name", "")
+                or STATE_MAP.get(state, state)
+            )
+
         def rows_for_po(p, po_lines):
             po_fields = {
                 "PO No":          p.get("name", "") if p else "",
-                "PO Apprvd Stat": p.get("state", "") if p else "",
-                "P Cat":          (p.get("itemtypes") or {}).get("display_name", "") if p else "",
-                "P Type":         (p.get("po_type") or "") if p else "",
+                "PO Apprvd Stat": _po_apprvd_stat(p),
+                "P Cat":          "",
+                "P Type":         "",
             }
-            # Only real product lines (have a default_code)
             real = [l for l in po_lines if _product_code(l)]
             if not real:
                 return [{**base, **po_fields,
                          "Item Details": "", "Odoo Code": "", "Inv Quantity": ""}]
-            return [{
-                **base, **po_fields,
-                "Item Details": _product_name(l),
-                "Odoo Code":    _product_code(l),
-                "Inv Quantity": l.get("qty_in_transit") if l.get("qty_in_transit") not in (None, False) else "",
-            } for l in real]
+            rows = []
+            for l in real:
+                code = _product_code(l)
+                prod_info = product_map.get(code, {})
+                rows.append({
+                    **base,
+                    **po_fields,
+                    "P Cat":        prod_info.get("P Cat", ""),
+                    "P Type":       prod_info.get("P Type", ""),
+                    "Item Details": _product_name(l),
+                    "Odoo Code":    code,
+                    "Inv Quantity": l.get("qty_in_transit") if l.get("qty_in_transit") not in (None, False) else "",
+                })
+            return rows
 
         if not pos:
             return rows_for_po(None, lines)

@@ -4,7 +4,6 @@ import base64
 import logging
 import sys
 import os
-import re
 
 # Force UTF-8 output on Windows to handle emojis in print statements
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
@@ -13,13 +12,14 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8')
 
 from datetime import date
+from collections import defaultdict
+import gspread
+from gspread_dataframe import set_with_dataframe
+from google.oauth2 import service_account
+import pandas as pd
 import time
 from dotenv import load_dotenv
 from requests.exceptions import RequestException
-from google.oauth2 import service_account
-import gspread
-from gspread_dataframe import set_with_dataframe
-import pandas as pd
 
 load_dotenv()
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -38,6 +38,16 @@ today = date.today()
 
 session = requests.Session()
 USER_ID = None
+
+# ========= COLUMN ORDER ==========
+COLUMNS = [
+    "Company", "PO No", "PO Apprvd Stat", "P Cat", "P Type",
+    "Inv Month", "Vendor", "Item Details", "Odoo Code", "Inv No", "Inv Date",
+    "Inv Quantity", "Inv Value", "Adjust", "Pmt Term", "Ship Mode",
+    "Inco", "Booked Ship ETD", "Booked Ship ETA", "ETD", "ETA",
+    "BL Number", "BL Date", "LC Number", "LC Date",
+    "I/H Plan Month", "Inhoused Date", "I/H Status",
+]
 
 # ========= GOOGLE SHEETS CLIENT ==========
 def get_gspread_client():
@@ -71,7 +81,7 @@ def get_gspread_client():
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
 
-    raise Exception("No Google credentials found. Place service_account.json in the script folder or set GOOGLE_CREDS_BASE64.")
+    raise Exception("No Google credentials found.")
 
 # ========= RETRY LOGIC ==========
 def retry_request(method, url, max_retries=3, backoff=3, **kwargs):
@@ -102,19 +112,6 @@ def login():
     else:
         raise Exception("❌ Login failed")
 
-# ========= GET CSRF TOKEN ==========
-def get_csrf_token():
-    r = session.get(f"{ODOO_URL}/web")
-    r.raise_for_status()
-    # Odoo embeds csrf_token in the HTML as a JS variable or meta tag
-    match = re.search(r'"csrf_token"\s*:\s*"([^"]+)"', r.text)
-    if match:
-        return match.group(1)
-    match = re.search(r"csrf_token['\"]?\s*:\s*['\"]([^'\"]+)['\"]", r.text)
-    if match:
-        return match.group(1)
-    raise Exception("❌ Could not extract CSRF token from /web page")
-
 # ========= SWITCH COMPANY ==========
 def switch_company(company_id):
     if USER_ID is None:
@@ -136,113 +133,272 @@ def switch_company(company_id):
     print(f"🔄 Session switched to company {company_id}")
     return True
 
-# ========= CREATE REPORT WIZARD ==========
-def create_wizard(company_id, upto_date, report_type="monthly_transit_report"):
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "transit.report.wizard",
-            "method": "web_save",
-            "args": [[], {"report_type": report_type, "upto_date": upto_date, "company_id": company_id}],
-            "kwargs": {
-                "context": {
-                    "lang": "en_US",
-                    "tz": "Asia/Dhaka",
-                    "uid": USER_ID,
-                    "allowed_company_ids": [company_id],
-                },
-                "specification": {
-                    "report_type": {},
-                    "upto_date": {},
-                    "company_id": {"fields": {"display_name": {}}},
+# ========= FETCH PRODUCT CLASSIFICATION ==========
+def fetch_product_map(odoo_codes, company_id):
+    """Batch-fetch categ_type (P Cat) and classification_id (P Type) from product.template by default_code."""
+    if not odoo_codes:
+        return {}
+
+    codes = [c for c in odoo_codes if c]
+    if not codes:
+        return {}
+
+    # Fetch in chunks to avoid too-large domains
+    chunk_size = 500
+    product_map = {}
+
+    for i in range(0, len(codes), chunk_size):
+        chunk = codes[i:i + chunk_size]
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "product.template",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "default_code": {},
+                        "categ_type":        {"fields": {"display_name": {}}},
+                        "classification_id": {"fields": {"display_name": {}}},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(chunk) + 10,
+                    "context": {
+                        "lang": "en_US",
+                        "tz": "Asia/Dhaka",
+                        "uid": USER_ID,
+                        "allowed_company_ids": [company_id],
+                    },
+                    "count_limit": 100001,
+                    "domain": [["default_code", "in", chunk]],
                 },
             },
-        },
-    }
-    r = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_kw", json=payload)
-    result = r.json().get("result", [])
-    if not result:
-        raise Exception("❌ Failed to create report wizard")
-    wizard_id = result[0]["id"]
-    print(f"📋 Wizard created (id={wizard_id})")
-    return wizard_id
-
-# ========= TRIGGER REPORT ACTION ==========
-def trigger_report_action(wizard_id, company_id):
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "args": [[wizard_id]],
-            "kwargs": {
-                "context": {
-                    "lang": "en_US",
-                    "tz": "Asia/Dhaka",
-                    "uid": USER_ID,
-                    "allowed_company_ids": [company_id],
+        }
+        r = retry_request(
+            session.post,
+            f"{ODOO_URL}/web/dataset/call_kw/product.template/web_search_read",
+            json=payload,
+        )
+        for rec in r.json().get("result", {}).get("records", []):
+            code = rec.get("default_code") or ""
+            if code:
+                product_map[code] = {
+                    "P Cat":  (rec.get("categ_type") or {}).get("display_name", ""),
+                    "P Type": (rec.get("classification_id") or {}).get("display_name", ""),
                 }
+
+    print(f"📦 Product map built: {len(product_map)} products matched")
+    return product_map
+
+# ========= FETCH GOODS IN TRANSIT ==========
+def fetch_git(company_id, cname):
+    specification = {
+        "company_id":    {"fields": {"display_name": {}}},
+        "po_numbers":    {"fields": {
+            "name":      {},
+            "state":     {},
+            "next_approver": {"fields": {"display_name": {}}},
+        }},
+        "vendor":        {"fields": {"display_name": {}}},
+        "invoice_number": {},
+        "invoice_date":  {},
+        "subtotal":      {},
+        "adjusted_state":{},
+        "payment_term":  {"fields": {"display_name": {}}},
+        "shipment_mode": {"fields": {"display_name": {}}},
+        "inco_terms":    {"fields": {"display_name": {}}},
+        "booked_etd":    {},
+        "booked_eta":    {},
+        "etd":           {},
+        "eta":           {},
+        "bl_number":     {},
+        "bl_date":       {},
+        "lc_number":     {},
+        "lc_date":       {},
+        "ih_plan":       {},
+        "grn_date":      {},
+        "state":         {},
+        "line_ids":      {"fields": {
+            "po_id":     {"fields": {}},
+            "product_id":{"fields": {"display_name": {}, "default_code": {}}},
+            "qty_in_transit": {},
+        }},
+    }
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "transit.model",
+            "method": "web_search_read",
+            "args": [],
+            "kwargs": {
+                "specification": specification,
+                "offset": 0,
+                "order": "invoice_date DESC",
+                "limit": 5000,
+                "context": {
+                    "lang": "en_US",
+                    "tz": "Asia/Dhaka",
+                    "uid": USER_ID,
+                    "allowed_company_ids": [company_id],
+                    "bin_size": True,
+                    "current_company_id": company_id,
+                },
+                "count_limit": 10001,
+                "domain": [],
             },
-            "method": "action_generate_xlsx_report",
-            "model": "transit.report.wizard",
         },
     }
-    r = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_button", json=payload)
-    result = r.json().get("result")
-    if not result:
-        raise Exception("❌ Failed to trigger report action")
-    print(f"📄 Report action triggered: {result.get('name', 'Report')}")
-    return result
-
-# ========= DOWNLOAD REPORT ==========
-def download_report(action, wizard_id, company_id, csrf_token, output_path):
-    report_name = action["report_name"]
-    options = action.get("data", {})
-    context = {
-        "lang": "en_US",
-        "tz": "Asia/Dhaka",
-        "uid": USER_ID,
-        "allowed_company_ids": [company_id],
-        "active_model": "transit.report.wizard",
-        "active_id": wizard_id,
-        "active_ids": [wizard_id],
-    }
-
-    import urllib.parse
-    options_str = urllib.parse.quote(json.dumps(options, separators=(",", ":")))
-    context_str = urllib.parse.quote(json.dumps(context, separators=(",", ":")))
-    report_url = (
-        f"/report/xlsx/{report_name}"
-        f"?options={options_str}"
-        f"&context={context_str}"
+    r = retry_request(
+        session.post,
+        f"{ODOO_URL}/web/dataset/call_kw/transit.model/web_search_read",
+        json=payload,
     )
-
-    form_data = {
-        "data": json.dumps([report_url, "xlsx"]),
-        "context": json.dumps(context),
-        "token": "dummy-because-api-expects-one",
-        "csrf_token": csrf_token,
-    }
-
-    r = retry_request(session.post, f"{ODOO_URL}/report/download", data=form_data)
-
-    content_type = r.headers.get("Content-Type", "")
-    if "spreadsheet" not in content_type and "octet-stream" not in content_type and "xlsx" not in content_type:
-        print(f"⚠️ Unexpected content type: {content_type}")
-        print("Response snippet:", r.text[:300])
-        raise Exception("❌ Response does not appear to be an xlsx file")
+    r.raise_for_status()
 
     try:
-        with open(output_path, "wb") as f:
-            f.write(r.content)
-    except PermissionError:
-        base, ext = os.path.splitext(output_path)
-        output_path = f"{base}_new{ext}"
-        with open(output_path, "wb") as f:
-            f.write(r.content)
-        print(f"⚠️ Original file was locked — saved as: {output_path}")
-    print(f"📂 Report saved: {output_path}")
-    return output_path
+        data = r.json()["result"]["records"]
+    except Exception as e:
+        print(f"❌ {cname}: Failed to parse response: {e}")
+        print(r.text[:200])
+        return []
+
+    print(f"📊 {cname}: {len(data)} transit records fetched")
+
+    # ---- Collect all Odoo codes for product lookup ----
+    STATE_MAP = {
+        "draft":      "Draft",
+        "sent":       "RFQ Sent",
+        "to approve": "To Approve",
+        "purchase":   "Approved",
+        "done":       "Locked",
+        "cancel":     "Cancelled",
+    }
+
+    def _product_name(line):
+        dn = (line.get("product_id") or {}).get("display_name", "") or ""
+        if dn.startswith("[") and "]" in dn:
+            return dn[dn.index("]") + 2:]
+        return dn
+
+    def _product_code(line):
+        return (line.get("product_id") or {}).get("default_code", "") or ""
+
+    all_codes = set()
+    for record in data:
+        for line in (record.get("line_ids") or []):
+            code = _product_code(line)
+            if code:
+                all_codes.add(code)
+
+    product_map = fetch_product_map(all_codes, company_id)
+
+    def expand(record):
+        pos   = record.get("po_numbers", []) or []
+        lines = record.get("line_ids", []) or []
+
+        inv_date = record.get("invoice_date") or ""
+        try:
+            inv_month = pd.to_datetime(inv_date).strftime("%b-%y") if inv_date else ""
+        except Exception:
+            inv_month = ""
+
+        # Group lines by po_id
+        lines_by_po = defaultdict(list)
+        lines_no_po = []
+        for line in lines:
+            po_id = (line.get("po_id") or {}).get("id")
+            if po_id:
+                lines_by_po[po_id].append(line)
+            else:
+                lines_no_po.append(line)
+
+        base = {
+            "Company":         (record.get("company_id") or {}).get("display_name", ""),
+            "Inv Month":       inv_month,
+            "Vendor":          (record.get("vendor") or {}).get("display_name", ""),
+            "Inv No":          record.get("invoice_number") or "",
+            "Inv Date":        inv_date,
+            "Inv Value":       record.get("subtotal") if record.get("subtotal") not in (None, False) else "",
+            "Adjust":          record.get("adjusted_state") or "",
+            "Pmt Term":        (record.get("payment_term") or {}).get("display_name", ""),
+            "Ship Mode":       (record.get("shipment_mode") or {}).get("display_name", ""),
+            "Inco":            (record.get("inco_terms") or {}).get("display_name", ""),
+            "Booked Ship ETD": record.get("booked_etd") or "",
+            "Booked Ship ETA": record.get("booked_eta") or "",
+            "ETD":             record.get("etd") or "",
+            "ETA":             record.get("eta") or "",
+            "BL Number":       record.get("bl_number") or "",
+            "BL Date":         record.get("bl_date") or "",
+            "LC Number":       record.get("lc_number") or "",
+            "LC Date":         record.get("lc_date") or "",
+            "I/H Plan Month":  record.get("ih_plan") or "",
+            "Inhoused Date":   record.get("grn_date") or "",
+            "I/H Status":      record.get("state") or "",
+        }
+
+        def _po_apprvd_stat(p):
+            if not p:
+                return ""
+            state = p.get("state", "")
+            if state in ("purchase", "cancel", "done", ""):
+                return STATE_MAP.get(state, state)
+            return (
+                (p.get("next_approver") or {}).get("display_name", "")
+                or STATE_MAP.get(state, state)
+            )
+
+        def rows_for_po(p, po_lines):
+            po_fields = {
+                "PO No":          p.get("name", "") if p else "",
+                "PO Apprvd Stat": _po_apprvd_stat(p),
+                "P Cat":          "",   # filled below per product line
+                "P Type":         "",   # filled below per product line
+            }
+            real = [l for l in po_lines if _product_code(l)]
+            if not real:
+                return [{**base, **po_fields,
+                         "Item Details": "", "Odoo Code": "", "Inv Quantity": ""}]
+            rows = []
+            for l in real:
+                code = _product_code(l)
+                prod_info = product_map.get(code, {})
+                rows.append({
+                    **base,
+                    **po_fields,
+                    "P Cat":        prod_info.get("P Cat", ""),
+                    "P Type":       prod_info.get("P Type", ""),
+                    "Item Details": _product_name(l),
+                    "Odoo Code":    code,
+                    "Inv Quantity": l.get("qty_in_transit") if l.get("qty_in_transit") not in (None, False) else "",
+                })
+            return rows
+
+        if not pos:
+            return rows_for_po(None, lines)
+
+        rows = []
+        for p in pos:
+            rows.extend(rows_for_po(p, lines_by_po.get(p["id"], [])))
+        return rows
+
+    all_rows = [row for rec in data for row in expand(rec)]
+    print(f"📊 {cname}: {len(all_rows)} rows expanded")
+
+    # ---- coverage check ----
+    df_check = pd.DataFrame(all_rows, columns=COLUMNS)
+    empty = {c: int(df_check[c].replace("", pd.NA).isna().sum())
+             for c in COLUMNS if df_check[c].replace("", pd.NA).isna().any()}
+    if empty:
+        print("⚠️  Columns with blank values:")
+        for col, n in empty.items():
+            print(f"   {col}: {n} blank row(s)")
+    else:
+        print("✅ No blank values in any column")
+
+    return all_rows
 
 # ========= MAIN ==========
 if __name__ == "__main__":
@@ -254,28 +410,27 @@ if __name__ == "__main__":
     if not switch_company(company_id):
         sys.exit(1)
 
-    csrf_token = get_csrf_token()
-    print(f"🔑 CSRF token obtained")
+    records = fetch_git(company_id, cname)
 
-    upto_date = today.isoformat()
-    wizard_id = create_wizard(company_id, upto_date)
-    action = trigger_report_action(wizard_id, company_id)
+    if records:
+        df = pd.DataFrame(records, columns=COLUMNS)
+        output_file = f"git_report_{today.isoformat()}.xlsx"
+        df.to_excel(output_file, index=False)
+        print(f"📂 Saved: {output_file}")
 
-    output_file = f"git_report_{today.isoformat()}.xlsx"
-    saved_path = download_report(action, wizard_id, company_id, csrf_token, output_file)
+        # ========= GOOGLE SHEETS ==========
+        try:
+            client = get_gspread_client()
+            sheet = client.open_by_key(SHEET_KEY)
+            worksheet = sheet.worksheet(WORKSHEET_NAME)
+            worksheet.batch_clear(["A:AB"])
+            set_with_dataframe(worksheet, df)
+            print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
+        except Exception as e:
+            import traceback
+            print(f"❌ Error while pasting to Google Sheets: {e}")
+            traceback.print_exc()
+    else:
+        print(f"❌ No GIT data fetched for {cname}")
 
-    # ========= GOOGLE SHEETS ==========
-    try:
-        df = pd.read_excel(saved_path)
-        client = get_gspread_client()
-        sheet = client.open_by_key(SHEET_KEY)
-        worksheet = sheet.worksheet(WORKSHEET_NAME)
-        worksheet.batch_clear(["A:ZZ"])
-        set_with_dataframe(worksheet, df)
-        print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
-    except Exception as e:
-        import traceback
-        print(f"❌ Error while pasting to Google Sheets: {e}")
-        traceback.print_exc()
-
-    print(f"✅ Done — {output_file}")
+    print(f"✅ Done")

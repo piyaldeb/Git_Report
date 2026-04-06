@@ -199,7 +199,7 @@ def fetch_po_details(company_id, cname):
 
     print(f"📋 {cname}: {len(data)} transit lines fetched")
 
-    # Step 2: Fetch purchase.order records for PO Apprvd Stat / P Cat / P Type
+    # Step 2: Fetch purchase.order records for PO Apprvd Stat
     po_ids = list({(rec.get("po_id") or {}).get("id") for rec in data if (rec.get("po_id") or {}).get("id")})
     po_map = {}
     if po_ids:
@@ -215,8 +215,6 @@ def fetch_po_details(company_id, cname):
                         "name":           {},
                         "display_name":   {},
                         "state":          {},
-                        "itemtypes":      {"fields": {"display_name": {}}},
-                        "po_type":        {},
                         "next_approver":  {"fields": {"display_name": {}}},
                     },
                     "offset": 0,
@@ -232,6 +230,50 @@ def fetch_po_details(company_id, cname):
         for p in pr.json().get("result", {}).get("records", []):
             po_map[p["id"]] = p
         print(f"📋 {cname}: {len(po_map)} purchase orders fetched")
+
+    # Step 2b: Fetch product.template for P Cat (categ_type) and P Type (classification_id) by Odoo code
+    def _extract_code(rec):
+        dn = (rec.get("product_id") or {}).get("display_name", "") or ""
+        if dn.startswith("[") and "]" in dn:
+            return dn[1:dn.index("]")]
+        return ""
+
+    all_codes = list({_extract_code(rec) for rec in data if _extract_code(rec)})
+    product_map = {}
+    chunk_size = 500
+    for i in range(0, len(all_codes), chunk_size):
+        chunk = all_codes[i:i + chunk_size]
+        prod_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "product.template",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "default_code":      {},
+                        "categ_type":        {"fields": {"display_name": {}}},
+                        "classification_id": {"fields": {"display_name": {}}},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(chunk) + 10,
+                    "context": ctx,
+                    "count_limit": 100001,
+                    "domain": [["default_code", "in", chunk]],
+                },
+            },
+        }
+        pr2 = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_kw/product.template/web_search_read", json=prod_payload)
+        for rec in pr2.json().get("result", {}).get("records", []):
+            code = rec.get("default_code") or ""
+            if code:
+                product_map[code] = {
+                    "P Cat":  (rec.get("categ_type") or {}).get("display_name", ""),
+                    "P Type": (rec.get("classification_id") or {}).get("display_name", ""),
+                }
+    print(f"📦 {cname}: {len(product_map)} products mapped (P Cat / P Type)")
 
     # Step 3: Fetch transit.model header records for remaining fields
     def _tid(rec):
@@ -311,8 +353,8 @@ def fetch_po_details(company_id, cname):
                 else (po.get("next_approver") or {}).get("display_name", "")
                 or STATE_MAP.get(po.get("state", ""), po.get("state", ""))
             ),
-            "P Cat":           (po.get("itemtypes") or {}).get("display_name", ""),
-            "P Type":          po.get("po_type", "") or "",
+            "P Cat":           product_map.get(odoo_code, {}).get("P Cat", ""),
+            "P Type":          product_map.get(odoo_code, {}).get("P Type", ""),
             "Inv Month":       inv_month,
             "Vendor":          (rec.get("vendor_main") or {}).get("display_name", ""),
             "Item Details":    item_details,
