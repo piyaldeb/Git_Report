@@ -169,7 +169,7 @@ def fetch_po_details(company_id, cname):
                 "limit": 10000,
                 "context": ctx,
                 "count_limit": 100001,
-                "domain": [],
+                "domain": [["transit_id.company_id", "=", company_id]],
             },
         },
     }
@@ -202,6 +202,7 @@ def fetch_po_details(company_id, cname):
                 "args": [],
                 "kwargs": {
                     "specification": {
+                        "name":         {},
                         "display_name": {},
                         "state":        {},
                         "itemtypes":    {"fields": {"display_name": {}}},
@@ -292,7 +293,7 @@ def fetch_po_details(company_id, cname):
 
         return {
             "Company":         (transit.get("company_id") or {}).get("display_name", ""),
-            "PO No":           po_ref.get("display_name", ""),
+            "PO No":           po.get("name", "") or po_ref.get("display_name", ""),
             "PO Apprvd Stat":  po.get("state", ""),
             "P Cat":           (po.get("itemtypes") or {}).get("display_name", ""),
             "P Type":          po.get("po_type", "") or "",
