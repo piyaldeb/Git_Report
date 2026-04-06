@@ -212,11 +212,12 @@ def fetch_po_details(company_id, cname):
                 "args": [],
                 "kwargs": {
                     "specification": {
-                        "name":         {},
-                        "display_name": {},
-                        "state":        {},
-                        "itemtypes":    {"fields": {"display_name": {}}},
-                        "po_type":      {},
+                        "name":           {},
+                        "display_name":   {},
+                        "state":          {},
+                        "itemtypes":      {"fields": {"display_name": {}}},
+                        "po_type":        {},
+                        "next_approver":  {"fields": {"display_name": {}}},
                     },
                     "offset": 0,
                     "order": "id ASC",
@@ -304,7 +305,12 @@ def fetch_po_details(company_id, cname):
         return {
             "Company":         (transit.get("company_id") or {}).get("display_name", ""),
             "PO No":           po.get("name", "") or po_ref.get("display_name", ""),
-            "PO Apprvd Stat":  STATE_MAP.get(po.get("state", ""), po.get("state", "")),
+            "PO Apprvd Stat":  (
+                STATE_MAP.get(po.get("state", ""), po.get("state", ""))
+                if po.get("state") in ("purchase", "cancel", "done", "")
+                else (po.get("next_approver") or {}).get("display_name", "")
+                or STATE_MAP.get(po.get("state", ""), po.get("state", ""))
+            ),
             "P Cat":           (po.get("itemtypes") or {}).get("display_name", ""),
             "P Type":          po.get("po_type", "") or "",
             "Inv Month":       inv_month,
