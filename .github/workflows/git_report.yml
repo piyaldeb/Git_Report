@@ -48,14 +48,14 @@ jobs:
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
         run: python GIT_Zip.py
 
-      - name: Run PO Zip Report (Raw Data)
-        env:
-          ODOO_URL: ${{ secrets.ODOO_URL }}
-          ODOO_DB: ${{ secrets.ODOO_DB }}
-          ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
-          ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
-          GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
-        run: python PO_Zip.py
+      # - name: Run PO Zip Report (Raw Data)  # disabled: replaced by PO_Zip_Details.py
+      #   env:
+      #     ODOO_URL: ${{ secrets.ODOO_URL }}
+      #     ODOO_DB: ${{ secrets.ODOO_DB }}
+      #     ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
+      #     ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
+      #     GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
+      #   run: python PO_Zip.py
 
       - name: Run PO Details (Transit Lines - Metal Trims)
         env:

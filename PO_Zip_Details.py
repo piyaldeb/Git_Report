@@ -30,7 +30,7 @@ USERNAME = os.getenv("ODOO_USERNAME")
 PASSWORD = os.getenv("ODOO_PASSWORD")
 
 SHEET_KEY = "16KUtHe-6R6Sd1HarFgS6Y2rEZGmUcM3ohAzPLy7Kxkg"
-WORKSHEET_NAME = "PO_Zip_Details"
+WORKSHEET_NAME = "PO_Zip"
 
 today = date.today()
 
