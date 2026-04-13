@@ -56,3 +56,12 @@ jobs:
           ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
         run: python PO_Zip_Details.py
+
+      - name: Run PO Local (Order Lines - Metal Trims)
+        env:
+          ODOO_URL: ${{ secrets.ODOO_URL }}
+          ODOO_DB: ${{ secrets.ODOO_DB }}
+          ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
+          ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
+          GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
+        run: python local.py
