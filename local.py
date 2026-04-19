@@ -30,7 +30,11 @@ USERNAME = os.getenv("ODOO_USERNAME")
 PASSWORD = os.getenv("ODOO_PASSWORD")
 
 SHEET_KEY = "1n3I1G48V2r9JgJcPyG22KAV2I47FqS5MmBfRH3DKJrw"
-WORKSHEET_NAME = "Sheet1"
+
+COMPANIES = [
+    {"company_id": 3, "cname": "Metal Trims", "worksheet": "Live Data_MT"},
+    {"company_id": 1, "cname": "Zipper",      "worksheet": "Live Data_Zip"},
+]
 
 today = date.today()
 
@@ -257,29 +261,36 @@ if __name__ == "__main__":
     userinfo = login()
     print("User info (allowed companies):", userinfo.get("user_companies", {}))
 
-    company_id = 3
-    cname = "Metal Trims"
+    client = get_gspread_client()
+    sheet = client.open_by_key(SHEET_KEY)
 
-    if switch_company(company_id):
+    for comp in COMPANIES:
+        company_id = comp["company_id"]
+        cname = comp["cname"]
+        worksheet_name = comp["worksheet"]
+
+        print(f"\n===== Processing {cname} (company {company_id}) → '{worksheet_name}' =====")
+
+        if not switch_company(company_id):
+            continue
+
         records = fetch_po_local(company_id, cname)
-
-        if records:
-            df = pd.DataFrame(records, columns=COLUMNS)
-            output_file = f"po_local_{today.isoformat()}.xlsx"
-            df.to_excel(output_file, index=False)
-            print(f"📂 Saved: {output_file}")
-
-            # ========= GOOGLE SHEETS ==========
-            try:
-                client = get_gspread_client()
-                sheet = client.open_by_key(SHEET_KEY)
-                worksheet = sheet.worksheet(WORKSHEET_NAME)
-                worksheet.batch_clear(["A:M"])
-                set_with_dataframe(worksheet, df)
-                print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
-            except Exception as e:
-                import traceback
-                print(f"❌ Error while pasting to Google Sheets: {e}")
-                traceback.print_exc()
-        else:
+        if not records:
             print(f"❌ No data fetched for {cname}")
+            continue
+
+        df = pd.DataFrame(records, columns=COLUMNS)
+        output_file = f"po_local_{cname.replace(' ', '_')}_{today.isoformat()}.xlsx"
+        df.to_excel(output_file, index=False)
+        print(f"📂 Saved: {output_file}")
+
+        # ========= GOOGLE SHEETS ==========
+        try:
+            worksheet = sheet.worksheet(worksheet_name)
+            worksheet.batch_clear(["A:M"])
+            set_with_dataframe(worksheet, df)
+            print(f"✅ Data pasted to Google Sheets → '{worksheet_name}'")
+        except Exception as e:
+            import traceback
+            print(f"❌ Error while pasting to Google Sheets ({worksheet_name}): {e}")
+            traceback.print_exc()
