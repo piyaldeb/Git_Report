@@ -29,11 +29,19 @@ DB = os.getenv("ODOO_DB")
 USERNAME = os.getenv("ODOO_USERNAME")
 PASSWORD = os.getenv("ODOO_PASSWORD")
 
-SHEET_KEY = "1n3I1G48V2r9JgJcPyG22KAV2I47FqS5MmBfRH3DKJrw"
-
 COMPANIES = [
-    {"company_id": 3, "cname": "Metal Trims", "worksheet": "Live Data_MT"},
-    {"company_id": 1, "cname": "Zipper",      "worksheet": "Live Data_Zip"},
+    {
+        "company_id": 3,
+        "cname": "Metal Trims",
+        "sheet_key": "1n3I1G48V2r9JgJcPyG22KAV2I47FqS5MmBfRH3DKJrw",
+        "worksheet": "Live Data_MT",
+    },
+    {
+        "company_id": 1,
+        "cname": "Zipper",
+        "sheet_key": "1bRAOEAXPoihOFtaEfCO6wigN2GnHbXyy97FyRInav8A",
+        "worksheet": "Live Data_Zip",
+    },
 ]
 
 today = date.today()
@@ -262,11 +270,11 @@ if __name__ == "__main__":
     print("User info (allowed companies):", userinfo.get("user_companies", {}))
 
     client = get_gspread_client()
-    sheet = client.open_by_key(SHEET_KEY)
 
     for comp in COMPANIES:
         company_id = comp["company_id"]
         cname = comp["cname"]
+        sheet_key = comp["sheet_key"]
         worksheet_name = comp["worksheet"]
 
         print(f"\n===== Processing {cname} (company {company_id}) → '{worksheet_name}' =====")
@@ -286,6 +294,7 @@ if __name__ == "__main__":
 
         # ========= GOOGLE SHEETS ==========
         try:
+            sheet = client.open_by_key(sheet_key)
             worksheet = sheet.worksheet(worksheet_name)
             worksheet.batch_clear(["A:M"])
             set_with_dataframe(worksheet, df)
