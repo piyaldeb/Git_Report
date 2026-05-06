@@ -479,10 +479,10 @@ if __name__ == "__main__":
     df = df[df["Po Type"].astype(str).str.strip().str.lower() == "import"]
     print(f"🔎 Po Type=Import filter: {before} → {len(df)} rows")
 
-    issue_num = pd.to_numeric(df["Issue Value"], errors="coerce").fillna(0)
+    recv_qty_num = pd.to_numeric(df["Receive Quantity"], errors="coerce").fillna(0)
     before = len(df)
-    df = df[issue_num != 0].reset_index(drop=True)
-    print(f"🔎 Issue Value != 0 filter: {before} → {len(df)} rows")
+    df = df[recv_qty_num != 0].reset_index(drop=True)
+    print(f"🔎 Receive Quantity != 0 filter: {before} → {len(df)} rows")
 
     # Rename placeholder blanks to "" for output
     df_out = df.rename(columns={"_blank1": ""})
