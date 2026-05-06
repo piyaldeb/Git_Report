@@ -62,13 +62,18 @@ TO_DATE = os.getenv("TO_DATE") or TO_DATE_OBJ.isoformat()
 MONTH_ABBR = calendar.month_abbr[FROM_DATE_OBJ.month]  # Jan..Dec
 WORKSHEET_NAME = os.getenv("STOCK_WORKSHEET") or f"{MONTH_ABBR}_import"
 
-# ========= TARGET COLUMN ORDER (per user spec) ==========
+# ========= TARGET COLUMN ORDER (matches live sheet — 32 cols, blanks at T & Y) ==========
+# "_blank1" / "_blank2" are placeholders so pandas keeps them unique;
+# they're rewritten to "" right before pasting to Sheets.
 COLUMNS = [
-    "Category", "item name", "PO", "Invoice", "Receive Date", "Incoterm",
-    "Receive Quantity", "Receive Value", "Shipment Mode", "Classification",
-    "Item", "Vendor", "Closing Quantity", "invoice date", "Closing Value",
-    "Issue Quantity", "Issue Value", "Invoice/Purchase Orders/Created on",
+    "Product Type", "Category", "item name", "PO", "Invoice", "Receive Date",
+    "Incoterm", "Receive Quantity", "Receive Value", "Shipment Mode",
+    "Classification", "Item", "Vendor", "Closing Quantity", "invoice date",
+    "Closing Value", "Issue Quantity", "Issue Value",
+    "Invoice/Purchase Orders/Created on",
+    "_blank1",  # T
     "Item Code", "Landed Cost", "Opening Quantity", "Opening Value",
+    "_blank2",  # Y
     "Po Type", "Price", "Product", "Pur Price", "Rejected", "Unit", "Item Type",
 ]
 
@@ -360,6 +365,7 @@ def fetch_po_created(company_id, po_names):
                         "name": {},
                         "create_date": {},
                         "date_order": {},
+                        "incoterm_id": {"fields": {"display_name": {}}},
                     },
                     "offset": 0,
                     "order": "id ASC",
@@ -375,8 +381,10 @@ def fetch_po_created(company_id, po_names):
             for rec in r.json().get("result", {}).get("records", []) or []:
                 nm = rec.get("name") or ""
                 if nm:
-                    # prefer create_date; fall back to date_order
-                    out[nm] = (rec.get("create_date") or rec.get("date_order") or "")[:10]
+                    out[nm] = {
+                        "created_on": (rec.get("create_date") or rec.get("date_order") or "")[:10],
+                        "incoterm":   (rec.get("incoterm_id") or {}).get("display_name", "") or "",
+                    }
         except Exception as e:
             print(f"⚠️ purchase.order lookup failed: {e}")
             break
@@ -403,39 +411,45 @@ def map_records(records, lot_date_map, po_created_map):
         lot_dates = lot_date_map.get(lot_id, {}) if lot_id else {}
 
         po_no = rec.get("po_number") or ""
-        po_created = po_created_map.get(po_no, "") if po_no else ""
+        po_info = po_created_map.get(po_no, {}) if po_no else {}
+        po_created = po_info.get("created_on", "")
+        po_incoterm = po_info.get("incoterm", "")
 
-        rows.append({
-            "Category":           (rec.get("product_category") or {}).get("display_name", ""),
-            "item name":          item_name,
-            "PO":                 po_no,
-            "Invoice":            (rec.get("lot_id") or {}).get("display_name", ""),
-            "Receive Date":       rec.get("receive_date") or "",
-            "Incoterm":           "",  # not in API spec; left blank unless wired up
-            "Receive Quantity":   rec.get("receive_qty") if rec.get("receive_qty") is not None else "",
-            "Receive Value":      rec.get("receive_value") if rec.get("receive_value") is not None else "",
-            "Shipment Mode":      rec.get("shipment_mode") or "",
-            "Classification":     (rec.get("classification_id") or {}).get("display_name", ""),
-            "Item":               product_dn,
-            "Vendor":             (rec.get("partner_id") or {}).get("display_name", ""),
-            "Closing Quantity":   rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",
-            "invoice date":       (lot_dates.get("invoice_date") or "")[:10],
-            "Closing Value":      rec.get("cloing_value") if rec.get("cloing_value") is not None else "",
-            "Issue Quantity":     rec.get("issue_qty") if rec.get("issue_qty") is not None else "",
-            "Issue Value":        rec.get("issue_value") if rec.get("issue_value") is not None else "",
-            "Invoice/Purchase Orders/Created on": po_created,
-            "Item Code":          rec.get("pr_code") or "",
-            "Landed Cost":        rec.get("landed_cost") if rec.get("landed_cost") is not None else "",
-            "Opening Quantity":   rec.get("opening_qty") if rec.get("opening_qty") is not None else "",
-            "Opening Value":      rec.get("opening_value") if rec.get("opening_value") is not None else "",
-            "Po Type":            rec.get("po_type") or "",
-            "Price":              rec.get("lot_price") if rec.get("lot_price") is not None else "",
-            "Product":            (rec.get("product_type") or {}).get("display_name", ""),
-            "Pur Price":          rec.get("pur_price") if rec.get("pur_price") is not None else "",
-            "Rejected":           rec.get("rejected") or "",
-            "Unit":               (rec.get("product_uom") or {}).get("display_name", ""),
-            "Item Type":          (rec.get("item_category") or {}).get("display_name", ""),
-        })
+        product_type_name = (rec.get("product_type") or {}).get("display_name", "")
+        rows.append([
+            product_type_name,                                              # A: Product Type
+            (rec.get("product_category") or {}).get("display_name", ""),    # B: Category
+            item_name,                                                       # C: item name
+            po_no,                                                           # D: PO
+            (rec.get("lot_id") or {}).get("display_name", ""),               # E: Invoice
+            rec.get("receive_date") or "",                                   # F: Receive Date
+            po_incoterm,                                                     # G: Incoterm (from purchase.order)
+            rec.get("receive_qty") if rec.get("receive_qty") is not None else "",   # H
+            rec.get("receive_value") if rec.get("receive_value") is not None else "",# I
+            rec.get("shipment_mode") or "",                                  # J: Shipment Mode
+            (rec.get("classification_id") or {}).get("display_name", ""),    # K: Classification
+            product_dn,                                                       # L: Item
+            (rec.get("partner_id") or {}).get("display_name", ""),           # M: Vendor
+            rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # N
+            (lot_dates.get("invoice_date") or "")[:10],                      # O: invoice date
+            rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # P
+            rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # Q
+            rec.get("issue_value") if rec.get("issue_value") is not None else "",   # R
+            po_created,                                                       # S: Created on
+            "",                                                              # T: blank
+            rec.get("pr_code") or "",                                        # U: Item Code
+            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # V
+            rec.get("opening_qty") if rec.get("opening_qty") is not None else "",   # W
+            rec.get("opening_value") if rec.get("opening_value") is not None else "",# X
+            "",                                                              # Y: blank
+            rec.get("po_type") or "",                                        # Z: Po Type
+            rec.get("lot_price") if rec.get("lot_price") is not None else "",       # AA: Price
+            product_type_name,                                                # AB: Product
+            rec.get("pur_price") if rec.get("pur_price") is not None else "",       # AC: Pur Price
+            rec.get("rejected") or "",                                       # AD: Rejected
+            (rec.get("product_uom") or {}).get("display_name", ""),          # AE: Unit
+            (rec.get("item_category") or {}).get("display_name", ""),        # AF: Item Type
+        ])
     return rows
 
 # ========= MAIN ==========
@@ -472,9 +486,12 @@ if __name__ == "__main__":
     df = df[issue_num != 0].reset_index(drop=True)
     print(f"🔎 Issue Value != 0 filter: {before} → {len(df)} rows")
 
+    # Rename placeholder blanks to "" for output
+    df_out = df.rename(columns={"_blank1": "", "_blank2": ""})
+
     output_file = f"stock_report_{COMPANY_NAME.lower().replace(' ', '_')}_{FROM_DATE}_{TO_DATE}.xlsx"
-    df.to_excel(output_file, index=False)
-    print(f"📂 Saved: {output_file}  ({len(df)} rows)")
+    df_out.to_excel(output_file, index=False)
+    print(f"📂 Saved: {output_file}  ({len(df_out)} rows)")
 
     try:
         client = get_gspread_client()
@@ -482,10 +499,10 @@ if __name__ == "__main__":
         try:
             worksheet = sheet.worksheet(WORKSHEET_NAME)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=WORKSHEET_NAME, rows=max(len(df) + 50, 100), cols=len(COLUMNS) + 2)
+            worksheet = sheet.add_worksheet(title=WORKSHEET_NAME, rows=max(len(df_out) + 50, 100), cols=len(COLUMNS) + 2)
             print(f"➕ Created new worksheet '{WORKSHEET_NAME}'")
-        worksheet.batch_clear(["A:AC"])
-        set_with_dataframe(worksheet, df)
+        worksheet.batch_clear(["A:AF"])
+        set_with_dataframe(worksheet, df_out)
         print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
     except Exception as e:
         import traceback
