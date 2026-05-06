@@ -3,6 +3,7 @@ name: GIT Report
 on:
   schedule:
     - cron: '0 2,5,9 * * *'   # Runs at 8:00 AM, 11:00 AM, 3:00 PM BDT (2:00 AM, 5:00 AM, 9:00 AM UTC)
+    - cron: '0 2 2 * *'       # Monthly Stock Report: 2nd of each month, 8:00 AM BDT
   workflow_dispatch:          # Allow manual trigger from GitHub UI
 
 jobs:
@@ -22,6 +23,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run GIT Report (Monthly Transit Report)
+        if: github.event.schedule != '0 2 2 * *'
         env:
           ODOO_URL: ${{ secrets.ODOO_URL }}
           ODOO_DB: ${{ secrets.ODOO_DB }}
@@ -40,6 +42,7 @@ jobs:
       #   run: python PO_Zip.py
 
       - name: Run PO Details (Transit Lines - Metal Trims)
+        if: github.event.schedule != '0 2 2 * *'
         env:
           ODOO_URL: ${{ secrets.ODOO_URL }}
           ODOO_DB: ${{ secrets.ODOO_DB }}
@@ -49,6 +52,7 @@ jobs:
         run: python PO_Details.py
 
       - name: Run PO Zip Details (Transit Lines - Zipper)
+        if: github.event.schedule != '0 2 2 * *'
         env:
           ODOO_URL: ${{ secrets.ODOO_URL }}
           ODOO_DB: ${{ secrets.ODOO_DB }}
@@ -58,6 +62,7 @@ jobs:
         run: python PO_Zip_Details.py
 
       - name: Run PO Local (Order Lines - Metal Trims & Zipper)
+        if: github.event.schedule != '0 2 2 * *'
         env:
           ODOO_URL: ${{ secrets.ODOO_URL }}
           ODOO_DB: ${{ secrets.ODOO_DB }}
@@ -65,3 +70,13 @@ jobs:
           ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
         run: python local.py
+
+      - name: Run Stock Report (Metal Trims, monthly on day 2)
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 2 * *'
+        env:
+          ODOO_URL: ${{ secrets.ODOO_URL }}
+          ODOO_DB: ${{ secrets.ODOO_DB }}
+          ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
+          ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
+          GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
+        run: python Stock_Report.py
