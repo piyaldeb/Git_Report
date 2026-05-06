@@ -62,18 +62,17 @@ TO_DATE = os.getenv("TO_DATE") or TO_DATE_OBJ.isoformat()
 MONTH_ABBR = calendar.month_abbr[FROM_DATE_OBJ.month]  # Jan..Dec
 WORKSHEET_NAME = os.getenv("STOCK_WORKSHEET") or f"{MONTH_ABBR}_import"
 
-# ========= TARGET COLUMN ORDER (matches live sheet — 32 cols, blanks at T & Y) ==========
-# "_blank1" / "_blank2" are placeholders so pandas keeps them unique;
-# they're rewritten to "" right before pasting to Sheets.
+# ========= TARGET COLUMN ORDER (matches live sheet — 31 cols, blank at X only) ==========
+# "_blank1" is a placeholder so pandas keeps it unique;
+# it's rewritten to "" right before pasting to Sheets.
 COLUMNS = [
     "Product Type", "Category", "item name", "PO", "Invoice", "Receive Date",
     "Incoterm", "Receive Quantity", "Receive Value", "Shipment Mode",
     "Classification", "Item", "Vendor", "Closing Quantity", "invoice date",
     "Closing Value", "Issue Quantity", "Issue Value",
     "Invoice/Purchase Orders/Created on",
-    "_blank1",  # T
     "Item Code", "Landed Cost", "Opening Quantity", "Opening Value",
-    "_blank2",  # Y
+    "_blank1",  # X
     "Po Type", "Price", "Product", "Pur Price", "Rejected", "Unit", "Item Type",
 ]
 
@@ -436,13 +435,12 @@ def map_records(records, lot_date_map, po_created_map):
             rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # Q
             rec.get("issue_value") if rec.get("issue_value") is not None else "",   # R
             po_created,                                                       # S: Created on
-            "",                                                              # T: blank
-            rec.get("pr_code") or "",                                        # U: Item Code
-            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # V
-            rec.get("opening_qty") if rec.get("opening_qty") is not None else "",   # W
-            rec.get("opening_value") if rec.get("opening_value") is not None else "",# X
-            "",                                                              # Y: blank
-            rec.get("po_type") or "",                                        # Z: Po Type
+            rec.get("pr_code") or "",                                        # T: Item Code
+            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # U
+            rec.get("opening_qty") if rec.get("opening_qty") is not None else "",   # V
+            rec.get("opening_value") if rec.get("opening_value") is not None else "",# W
+            "",                                                              # X: blank
+            rec.get("po_type") or "",                                        # Y: Po Type
             rec.get("lot_price") if rec.get("lot_price") is not None else "",       # AA: Price
             product_type_name,                                                # AB: Product
             rec.get("pur_price") if rec.get("pur_price") is not None else "",       # AC: Pur Price
@@ -487,7 +485,7 @@ if __name__ == "__main__":
     print(f"🔎 Issue Value != 0 filter: {before} → {len(df)} rows")
 
     # Rename placeholder blanks to "" for output
-    df_out = df.rename(columns={"_blank1": "", "_blank2": ""})
+    df_out = df.rename(columns={"_blank1": ""})
 
     output_file = f"stock_report_{COMPANY_NAME.lower().replace(' ', '_')}_{FROM_DATE}_{TO_DATE}.xlsx"
     df_out.to_excel(output_file, index=False)
