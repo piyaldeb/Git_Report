@@ -501,6 +501,11 @@ if __name__ == "__main__":
             print(f"➕ Created new worksheet '{WORKSHEET_NAME}'")
         worksheet.batch_clear(["A:AF"])
         set_with_dataframe(worksheet, df_out)
+        # Force numeric format on quantity/value columns so Sheets doesn't
+        # auto-render integers as 1900-era dates.
+        num_fmt = {"numberFormat": {"type": "NUMBER", "pattern": "0.########"}}
+        for col in ("H:I", "N:N", "P:R", "U:W", "Z:Z", "AB:AB"):
+            worksheet.format(col, num_fmt)
         print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
     except Exception as e:
         import traceback

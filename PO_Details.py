@@ -409,6 +409,22 @@ if __name__ == "__main__":
 
         if records:
             df = pd.DataFrame(records, columns=COLUMNS)
+
+            # Sort by Inv Date (newest first), then cluster identical Inv No
+            # rows together within the same date.
+            inv_date_parsed = pd.to_datetime(df["Inv Date"], errors="coerce")
+            df = (
+                df.assign(_row_date=inv_date_parsed)
+                  .sort_values(
+                      by=["_row_date", "Inv No"],
+                      ascending=[False, True],
+                      kind="mergesort",
+                      na_position="last",
+                  )
+                  .drop(columns=["_row_date"])
+                  .reset_index(drop=True)
+            )
+
             output_file = f"po_details_{today.isoformat()}.xlsx"
             df.to_excel(output_file, index=False)
             print(f"📂 Saved: {output_file}")

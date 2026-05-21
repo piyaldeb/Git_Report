@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ':*)",
+      "Bash(ls \"/c/Users/Ranak/GIT/\"*.har)",
+      "Bash(python3)"
+    ]
+  }
+}
