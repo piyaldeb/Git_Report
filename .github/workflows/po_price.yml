@@ -1,6 +1,8 @@
 name: PO Price List (Metal Trims)
 
 on:
+  schedule:
+    - cron: '0 21 * * *'      # Daily at 3:00 AM BDT (21:00 UTC previous day)
   workflow_dispatch:          # Manual trigger from GitHub UI or gh CLI
 
 jobs:
