@@ -78,6 +78,7 @@ def get_gspread_client():
                 pass
         if creds_dict is None:
             raise Exception("GOOGLE_CREDS_BASE64 is neither valid JSON nor valid base64-encoded JSON")
+        print(f"🔑 Service account: {creds_dict.get('client_email', '?')} (share the sheet with this email as Editor)")
         scopes = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive",
@@ -338,9 +339,6 @@ if __name__ == "__main__":
     # ========= GOOGLE SHEETS ==========
     try:
         client = get_gspread_client()
-        sa_email = getattr(getattr(client, "auth", None), "service_account_email", "")
-        if sa_email:
-            print(f"🔑 Using service account: {sa_email} (share the sheet with this email as Editor)")
         sheet = client.open_by_key(SHEET_KEY)
         try:
             worksheet = sheet.worksheet(WORKSHEET_NAME)
