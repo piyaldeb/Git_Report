@@ -247,7 +247,7 @@ def fetch_git(company_id, cname):
                     "current_company_id": company_id,
                 },
                 "count_limit": 10001,
-                "domain": [],
+                "domain": [["state", "=", "in_transit"]],
             },
         },
     }
