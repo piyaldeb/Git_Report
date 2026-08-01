@@ -135,7 +135,7 @@ def switch_company(company_id):
 
 # ========= FETCH PRODUCT CLASSIFICATION ==========
 def fetch_product_map(odoo_codes, company_id):
-    """Batch-fetch categ_type (P Cat) and classification_id (P Type) from product.template by default_code."""
+    """Batch-fetch item_category (P Cat) and classification_id (P Type) from product.template by default_code."""
     if not odoo_codes:
         return {}
 
@@ -159,7 +159,7 @@ def fetch_product_map(odoo_codes, company_id):
                 "kwargs": {
                     "specification": {
                         "default_code": {},
-                        "categ_type":        {"fields": {"display_name": {}}},
+                        "item_category":     {"fields": {"display_name": {}}},
                         "classification_id": {"fields": {"display_name": {}}},
                     },
                     "offset": 0,
@@ -185,7 +185,7 @@ def fetch_product_map(odoo_codes, company_id):
             code = rec.get("default_code") or ""
             if code:
                 product_map[code] = {
-                    "P Cat":  (rec.get("categ_type") or {}).get("display_name", ""),
+                    "P Cat":  (rec.get("item_category") or {}).get("display_name", ""),
                     "P Type": (rec.get("classification_id") or {}).get("display_name", ""),
                 }
 
