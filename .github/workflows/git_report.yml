@@ -2,7 +2,8 @@ name: GIT Report
 
 on:
   schedule:
-    - cron: '0 2,5,9 * * *'   # Runs at 8:00 AM, 11:00 AM, 3:00 PM BDT (2:00 AM, 5:00 AM, 9:00 AM UTC)
+    - cron: '0,30 2-12 * * *' # Every 30 min, 8:00 AM - 6:30 PM BDT (2:00 - 12:30 UTC)
+    - cron: '0 13 * * *'      # 7:00 PM BDT (13:00 UTC) - last run of the day
     - cron: '0 21 * * *'      # PO_Details only: 3:00 AM BDT (21:00 UTC previous day)
     - cron: '0 2 2 * *'       # Monthly Stock Report: 2nd of each month, 8:00 AM BDT
   workflow_dispatch:          # Allow manual trigger from GitHub UI
