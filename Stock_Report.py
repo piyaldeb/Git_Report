@@ -55,14 +55,24 @@ def previous_month_range(ref_date):
     return first_of_prev_month, last_of_this_month, last_of_prev_month
 
 FROM_DATE_OBJ, TO_DATE_OBJ, REPORT_MONTH_LAST = previous_month_range(today)
-FROM_DATE = os.getenv("FROM_DATE") or FROM_DATE_OBJ.isoformat()
+
+ENV_FROM = os.getenv("FROM_DATE")
+if ENV_FROM:
+    FROM_DATE_OBJ = date.fromisoformat(ENV_FROM)
+    REPORT_MONTH_LAST = FROM_DATE_OBJ.replace(
+        day=calendar.monthrange(FROM_DATE_OBJ.year, FROM_DATE_OBJ.month)[1]
+    )
+FROM_DATE = FROM_DATE_OBJ.isoformat()
 TO_DATE = os.getenv("TO_DATE") or TO_DATE_OBJ.isoformat()
+
+# Rows are kept only when Receive Date falls inside the report month
+# (FROM_DATE_OBJ .. REPORT_MONTH_LAST); the wizard window is wider on purpose.
 
 # Worksheet name like "Apr_import"
 MONTH_ABBR = calendar.month_abbr[FROM_DATE_OBJ.month]  # Jan..Dec
 WORKSHEET_NAME = os.getenv("STOCK_WORKSHEET") or f"{MONTH_ABBR}_import"
 
-# ========= TARGET COLUMN ORDER (matches live sheet — 31 cols, blank at X only) ==========
+# ========= TARGET COLUMN ORDER (matches live sheet — 33 cols, blank at X only) ==========
 # "_blank1" is a placeholder so pandas keeps it unique;
 # it's rewritten to "" right before pasting to Sheets.
 COLUMNS = [
@@ -74,6 +84,7 @@ COLUMNS = [
     "Item Code", "Landed Cost", "Opening Quantity", "Opening Value",
     "_blank1",  # X
     "Po Type", "Price", "Product", "Pur Price", "Rejected", "Unit", "Item Type",
+    "ETD", "ETA",
 ]
 
 # ========= GOOGLE SHEETS CLIENT ==========
@@ -390,8 +401,65 @@ def fetch_po_created(company_id, po_names):
     print(f"📦 PO created dates fetched: {len(out)}")
     return out
 
+# ========= FETCH TRANSIT INFO (invoice date / ETD / ETA) ==========
+def fetch_transit_info(company_id, invoice_numbers):
+    """transit.model rows keyed by invoice_number → invoice_date, etd, eta."""
+    if not invoice_numbers:
+        return {}
+    names = list({n.strip() for n in invoice_numbers if n and n.strip()})
+    out = {}
+    chunk = 500
+    ctx = {"lang": "en_US", "tz": "Asia/Dhaka", "uid": USER_ID,
+           "allowed_company_ids": [company_id], "bin_size": True,
+           "current_company_id": company_id}
+    for i in range(0, len(names), chunk):
+        sub = names[i:i + chunk]
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "transit.model",
+                "method": "web_search_read",
+                "args": [],
+                "kwargs": {
+                    "specification": {
+                        "invoice_number": {},
+                        "invoice_date": {},
+                        "etd": {},
+                        "eta": {},
+                        "state": {},
+                    },
+                    "offset": 0,
+                    "order": "id ASC",
+                    "limit": len(sub) + 10,
+                    "context": ctx,
+                    "count_limit": 100001,
+                    "domain": [["invoice_number", "in", sub]],
+                },
+            },
+        }
+        try:
+            r = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_kw/transit.model/web_search_read", json=payload)
+            for rec in r.json().get("result", {}).get("records", []) or []:
+                nm = (rec.get("invoice_number") or "").strip()
+                if not nm:
+                    continue
+                # Prefer non-cancelled shipments when an invoice number repeats
+                if nm in out and rec.get("state") == "cancel":
+                    continue
+                out[nm] = {
+                    "invoice_date": (rec.get("invoice_date") or "")[:10],
+                    "etd":          (rec.get("etd") or "")[:10],
+                    "eta":          (rec.get("eta") or "")[:10],
+                }
+        except Exception as e:
+            print(f"⚠️ transit.model lookup failed: {e}")
+            break
+    print(f"🚢 Transit info fetched: {len(out)} invoices matched")
+    return out
+
 # ========= MAP TO TARGET COLUMNS ==========
-def map_records(records, lot_date_map, po_created_map):
+def map_records(records, lot_date_map, po_created_map, transit_map):
     rows = []
     for rec in records:
         product = rec.get("product_id") or {}
@@ -414,6 +482,11 @@ def map_records(records, lot_date_map, po_created_map):
         po_created = po_info.get("created_on", "")
         po_incoterm = po_info.get("incoterm", "")
 
+        invoice_no = (lot.get("display_name") or "").strip()
+        transit = transit_map.get(invoice_no, {}) if invoice_no else {}
+        # Real invoice date lives on transit.model; lot create_date is only a fallback
+        invoice_date = transit.get("invoice_date") or (lot_dates.get("invoice_date") or "")[:10]
+
         product_type_name = (rec.get("product_type") or {}).get("display_name", "")
         rows.append([
             product_type_name,                                              # A: Product Type
@@ -430,7 +503,7 @@ def map_records(records, lot_date_map, po_created_map):
             product_dn,                                                       # L: Item
             (rec.get("partner_id") or {}).get("display_name", ""),           # M: Vendor
             rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # N
-            (lot_dates.get("invoice_date") or "")[:10],                      # O: invoice date
+            invoice_date,                                                    # O: invoice date (transit.model)
             rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # P
             rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # Q
             rec.get("issue_value") if rec.get("issue_value") is not None else "",   # R
@@ -447,6 +520,8 @@ def map_records(records, lot_date_map, po_created_map):
             rec.get("rejected") or "",                                       # AD: Rejected
             (rec.get("product_uom") or {}).get("display_name", ""),          # AE: Unit
             (rec.get("item_category") or {}).get("display_name", ""),        # AF: Item Type
+            transit.get("etd", ""),                                          # AG: ETD
+            transit.get("eta", ""),                                          # AH: ETA
         ])
     return rows
 
@@ -468,10 +543,12 @@ if __name__ == "__main__":
 
     lot_ids = [(r.get("lot_id") or {}).get("id") for r in records]
     po_names = [r.get("po_number") for r in records]
+    invoice_nos = [(r.get("lot_id") or {}).get("display_name") for r in records]
     lot_date_map = fetch_lot_dates(COMPANY_ID, lot_ids)
     po_created_map = fetch_po_created(COMPANY_ID, po_names)
+    transit_map = fetch_transit_info(COMPANY_ID, invoice_nos)
 
-    rows = map_records(records, lot_date_map, po_created_map)
+    rows = map_records(records, lot_date_map, po_created_map, transit_map)
     df = pd.DataFrame(rows, columns=COLUMNS)
 
     # ========= FILTERS =========
@@ -483,6 +560,15 @@ if __name__ == "__main__":
     before = len(df)
     df = df[recv_qty_num != 0].reset_index(drop=True)
     print(f"🔎 Receive Quantity != 0 filter: {before} → {len(df)} rows")
+
+    # Keep only receipts of the report month — the wizard window extends into
+    # the current month, which otherwise leaks current-month rows into the sheet.
+    recv_dt = pd.to_datetime(df["Receive Date"], errors="coerce")
+    before = len(df)
+    df = df[
+        (recv_dt >= pd.Timestamp(FROM_DATE_OBJ)) & (recv_dt <= pd.Timestamp(REPORT_MONTH_LAST))
+    ].reset_index(drop=True)
+    print(f"🔎 Receive Date in {FROM_DATE_OBJ} → {REPORT_MONTH_LAST} filter: {before} → {len(df)} rows")
 
     # Rename placeholder blanks to "" for output
     df_out = df.rename(columns={"_blank1": ""})
@@ -499,7 +585,7 @@ if __name__ == "__main__":
         except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title=WORKSHEET_NAME, rows=max(len(df_out) + 50, 100), cols=len(COLUMNS) + 2)
             print(f"➕ Created new worksheet '{WORKSHEET_NAME}'")
-        worksheet.batch_clear(["A:AF"])
+        worksheet.batch_clear(["A:AH"])
         set_with_dataframe(worksheet, df_out)
         # Force numeric format on quantity/value columns so Sheets doesn't
         # auto-render integers as 1900-era dates.
