@@ -210,7 +210,7 @@ def create_stock_wizard(company_id, from_date, to_date):
         return wiz_id
     raise Exception(f"❌ Failed to create stock wizard: {r.text[:300]}")
 
-def compute_stock(company_id, wizard_id):
+def compute_stock(company_id, wizard_id, max_retries=4, backoff=30):
     payload = {
         "jsonrpc": "2.0",
         "method": "call",
@@ -224,11 +224,20 @@ def compute_stock(company_id, wizard_id):
             }},
         },
     }
-    r = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_button", json=payload)
-    if "error" in r.json():
-        print(f"❌ Compute error: {r.json()['error']}")
-    else:
-        print(f"⚡ Stock register computed for wizard {wizard_id}")
+    # The wizard SQL can hit transient SerializationFailure when the
+    # every-30-min report jobs touch the same tables — retry, don't give up.
+    for attempt in range(1, max_retries + 1):
+        r = retry_request(session.post, f"{ODOO_URL}/web/dataset/call_button", json=payload)
+        err = r.json().get("error")
+        if not err:
+            print(f"⚡ Stock register computed for wizard {wizard_id}")
+            return True
+        print(f"⚠️ Compute attempt {attempt}/{max_retries} failed: {str(err)[:200]}")
+        if attempt < max_retries:
+            print(f"⏳ Retrying compute in {backoff} seconds...")
+            time.sleep(backoff)
+    print("❌ Compute failed after all retries")
+    return False
 
 # ========= FETCH STOCK ROWS (paginated) ==========
 def fetch_stock_rows(company_id, wizard_id):
@@ -534,12 +543,13 @@ if __name__ == "__main__":
         sys.exit(1)
 
     wiz_id = create_stock_wizard(COMPANY_ID, FROM_DATE, TO_DATE)
-    compute_stock(COMPANY_ID, wiz_id)
+    if not compute_stock(COMPANY_ID, wiz_id):
+        sys.exit(1)
     records = fetch_stock_rows(COMPANY_ID, wiz_id)
 
     if not records:
         print(f"❌ No stock rows fetched for {COMPANY_NAME}")
-        sys.exit(0)
+        sys.exit(1)
 
     lot_ids = [(r.get("lot_id") or {}).get("id") for r in records]
     po_names = [r.get("po_number") for r in records]
