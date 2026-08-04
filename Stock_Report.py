@@ -75,15 +75,16 @@ PO_TYPE_TABS = {
     "local":  f"{MONTH_ABBR}_local",
 }
 
-# ========= TARGET COLUMN ORDER (matches live sheet — 26 cols A..Z, blank at R) ==========
+# ========= TARGET COLUMN ORDER (matches live sheet — 29 cols A..AC, blank at U) ==========
 # "_blank1" is a placeholder so pandas keeps it unique;
 # it's rewritten to "" right before pasting to Sheets.
 COLUMNS = [
     "Product Type", "Category", "item name", "PO", "Invoice", "Receive Date",
-    "Receive Quantity", "Shipment Mode", "Vendor", "Closing Quantity",
+    "Incoterm", "Receive Quantity", "Receive Value", "Shipment Mode",
+    "Vendor", "Closing Quantity",
     "invoice date", "Closing Value", "Issue Quantity", "Issue Value",
-    "Invoice/Purchase Orders/Created on", "Landed Cost", "Opening Value",
-    "_blank1",  # R
+    "Invoice/Purchase Orders/Created on", "Item Code", "Landed Cost", "Opening Value",
+    "_blank1",  # U
     "Po Type", "Price", "Pur Price", "Rejected", "Unit", "Item Type",
     "ETD", "ETA",
 ]
@@ -505,26 +506,29 @@ def map_records(records, lot_date_map, po_created_map, transit_map):
             po_no,                                                           # D: PO
             (rec.get("lot_id") or {}).get("display_name", ""),               # E: Invoice
             rec.get("receive_date") or "",                                   # F: Receive Date
-            rec.get("receive_qty") if rec.get("receive_qty") is not None else "",   # G
-            rec.get("shipment_mode") or "",                                  # H: Shipment Mode
-            (rec.get("partner_id") or {}).get("display_name", ""),           # I: Vendor
-            rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # J
-            invoice_date,                                                    # K: invoice date (transit.model)
-            rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # L
-            rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # M
-            rec.get("issue_value") if rec.get("issue_value") is not None else "",   # N
-            po_created,                                                       # O: Created on
-            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # P
-            rec.get("opening_value") if rec.get("opening_value") is not None else "",# Q
-            "",                                                              # R: blank
-            rec.get("po_type") or "",                                        # S: Po Type
-            rec.get("lot_price") if rec.get("lot_price") is not None else "",       # T: Price
-            rec.get("pur_price") if rec.get("pur_price") is not None else "",       # U: Pur Price
-            rec.get("rejected") or "",                                       # V: Rejected
-            (rec.get("product_uom") or {}).get("display_name", ""),          # W: Unit
-            (rec.get("item_category") or {}).get("display_name", ""),        # X: Item Type
-            transit.get("etd", ""),                                          # Y: ETD
-            transit.get("eta", ""),                                          # Z: ETA
+            po_incoterm,                                                     # G: Incoterm (from purchase.order)
+            rec.get("receive_qty") if rec.get("receive_qty") is not None else "",   # H
+            rec.get("receive_value") if rec.get("receive_value") is not None else "",# I
+            rec.get("shipment_mode") or "",                                  # J: Shipment Mode
+            (rec.get("partner_id") or {}).get("display_name", ""),           # K: Vendor
+            rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # L
+            invoice_date,                                                    # M: invoice date (transit.model)
+            rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # N
+            rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # O
+            rec.get("issue_value") if rec.get("issue_value") is not None else "",   # P
+            po_created,                                                       # Q: Created on
+            rec.get("pr_code") or "",                                        # R: Item Code (Odoo internal ref)
+            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # S
+            rec.get("opening_value") if rec.get("opening_value") is not None else "",# T
+            "",                                                              # U: blank
+            rec.get("po_type") or "",                                        # V: Po Type
+            rec.get("lot_price") if rec.get("lot_price") is not None else "",       # W: Price
+            rec.get("pur_price") if rec.get("pur_price") is not None else "",       # X: Pur Price
+            rec.get("rejected") or "",                                       # Y: Rejected
+            (rec.get("product_uom") or {}).get("display_name", ""),          # Z: Unit
+            (rec.get("item_category") or {}).get("display_name", ""),        # AA: Item Type
+            transit.get("etd", ""),                                          # AB: ETD
+            transit.get("eta", ""),                                          # AC: ETA
         ])
     return rows
 
@@ -604,7 +608,7 @@ if __name__ == "__main__":
             # Force numeric format on quantity/value columns so Sheets doesn't
             # auto-render integers as 1900-era dates.
             num_fmt = {"numberFormat": {"type": "NUMBER", "pattern": "0.########"}}
-            for col in ("G:G", "J:J", "L:N", "P:Q", "T:U"):
+            for col in ("H:I", "L:L", "N:P", "S:T", "W:X"):
                 worksheet.format(col, num_fmt)
             print(f"✅ Data pasted to Google Sheets → '{tab_name}'")
         except Exception as e:
