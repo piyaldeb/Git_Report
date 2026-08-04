@@ -68,22 +68,23 @@ TO_DATE = os.getenv("TO_DATE") or TO_DATE_OBJ.isoformat()
 # Rows are kept only when Receive Date falls inside the report month
 # (FROM_DATE_OBJ .. REPORT_MONTH_LAST); the wizard window is wider on purpose.
 
-# Worksheet name like "Apr_import"
+# Worksheet per Po Type, like "Jul_import" / "Jul_local"
 MONTH_ABBR = calendar.month_abbr[FROM_DATE_OBJ.month]  # Jan..Dec
-WORKSHEET_NAME = os.getenv("STOCK_WORKSHEET") or f"{MONTH_ABBR}_import"
+PO_TYPE_TABS = {
+    "import": os.getenv("STOCK_WORKSHEET") or f"{MONTH_ABBR}_import",
+    "local":  f"{MONTH_ABBR}_local",
+}
 
-# ========= TARGET COLUMN ORDER (matches live sheet — 33 cols, blank at X only) ==========
+# ========= TARGET COLUMN ORDER (matches live sheet — 26 cols A..Z, blank at R) ==========
 # "_blank1" is a placeholder so pandas keeps it unique;
 # it's rewritten to "" right before pasting to Sheets.
 COLUMNS = [
     "Product Type", "Category", "item name", "PO", "Invoice", "Receive Date",
-    "Incoterm", "Receive Quantity", "Receive Value", "Shipment Mode",
-    "Classification", "Item", "Vendor", "Closing Quantity", "invoice date",
-    "Closing Value", "Issue Quantity", "Issue Value",
-    "Invoice/Purchase Orders/Created on",
-    "Item Code", "Landed Cost", "Opening Quantity", "Opening Value",
-    "_blank1",  # X
-    "Po Type", "Price", "Product", "Pur Price", "Rejected", "Unit", "Item Type",
+    "Receive Quantity", "Shipment Mode", "Vendor", "Closing Quantity",
+    "invoice date", "Closing Value", "Issue Quantity", "Issue Value",
+    "Invoice/Purchase Orders/Created on", "Landed Cost", "Opening Value",
+    "_blank1",  # R
+    "Po Type", "Price", "Pur Price", "Rejected", "Unit", "Item Type",
     "ETD", "ETA",
 ]
 
@@ -504,39 +505,32 @@ def map_records(records, lot_date_map, po_created_map, transit_map):
             po_no,                                                           # D: PO
             (rec.get("lot_id") or {}).get("display_name", ""),               # E: Invoice
             rec.get("receive_date") or "",                                   # F: Receive Date
-            po_incoterm,                                                     # G: Incoterm (from purchase.order)
-            rec.get("receive_qty") if rec.get("receive_qty") is not None else "",   # H
-            rec.get("receive_value") if rec.get("receive_value") is not None else "",# I
-            rec.get("shipment_mode") or "",                                  # J: Shipment Mode
-            (rec.get("classification_id") or {}).get("display_name", ""),    # K: Classification
-            product_dn,                                                       # L: Item
-            (rec.get("partner_id") or {}).get("display_name", ""),           # M: Vendor
-            rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # N
-            invoice_date,                                                    # O: invoice date (transit.model)
-            rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # P
-            rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # Q
-            rec.get("issue_value") if rec.get("issue_value") is not None else "",   # R
-            po_created,                                                       # S: Created on
-            rec.get("pr_code") or "",                                        # T: Item Code
-            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # U
-            rec.get("opening_qty") if rec.get("opening_qty") is not None else "",   # V
-            rec.get("opening_value") if rec.get("opening_value") is not None else "",# W
-            "",                                                              # X: blank
-            rec.get("po_type") or "",                                        # Y: Po Type
-            rec.get("lot_price") if rec.get("lot_price") is not None else "",       # AA: Price
-            product_type_name,                                                # AB: Product
-            rec.get("pur_price") if rec.get("pur_price") is not None else "",       # AC: Pur Price
-            rec.get("rejected") or "",                                       # AD: Rejected
-            (rec.get("product_uom") or {}).get("display_name", ""),          # AE: Unit
-            (rec.get("item_category") or {}).get("display_name", ""),        # AF: Item Type
-            transit.get("etd", ""),                                          # AG: ETD
-            transit.get("eta", ""),                                          # AH: ETA
+            rec.get("receive_qty") if rec.get("receive_qty") is not None else "",   # G
+            rec.get("shipment_mode") or "",                                  # H: Shipment Mode
+            (rec.get("partner_id") or {}).get("display_name", ""),           # I: Vendor
+            rec.get("cloing_qty") if rec.get("cloing_qty") is not None else "",     # J
+            invoice_date,                                                    # K: invoice date (transit.model)
+            rec.get("cloing_value") if rec.get("cloing_value") is not None else "", # L
+            rec.get("issue_qty") if rec.get("issue_qty") is not None else "",       # M
+            rec.get("issue_value") if rec.get("issue_value") is not None else "",   # N
+            po_created,                                                       # O: Created on
+            rec.get("landed_cost") if rec.get("landed_cost") is not None else "",   # P
+            rec.get("opening_value") if rec.get("opening_value") is not None else "",# Q
+            "",                                                              # R: blank
+            rec.get("po_type") or "",                                        # S: Po Type
+            rec.get("lot_price") if rec.get("lot_price") is not None else "",       # T: Price
+            rec.get("pur_price") if rec.get("pur_price") is not None else "",       # U: Pur Price
+            rec.get("rejected") or "",                                       # V: Rejected
+            (rec.get("product_uom") or {}).get("display_name", ""),          # W: Unit
+            (rec.get("item_category") or {}).get("display_name", ""),        # X: Item Type
+            transit.get("etd", ""),                                          # Y: ETD
+            transit.get("eta", ""),                                          # Z: ETA
         ])
     return rows
 
 # ========= MAIN ==========
 if __name__ == "__main__":
-    print(f"📅 Reporting window: {FROM_DATE} → {TO_DATE}  (sheet tab: {WORKSHEET_NAME})")
+    print(f"📅 Reporting window: {FROM_DATE} → {TO_DATE}  (tabs: {', '.join(PO_TYPE_TABS.values())})")
 
     login()
     if not switch_company(COMPANY_ID):
@@ -561,11 +555,7 @@ if __name__ == "__main__":
     rows = map_records(records, lot_date_map, po_created_map, transit_map)
     df = pd.DataFrame(rows, columns=COLUMNS)
 
-    # ========= FILTERS =========
-    before = len(df)
-    df = df[df["Po Type"].astype(str).str.strip().str.lower() == "import"]
-    print(f"🔎 Po Type=Import filter: {before} → {len(df)} rows")
-
+    # ========= SHARED FILTERS =========
     recv_qty_num = pd.to_numeric(df["Receive Quantity"], errors="coerce").fillna(0)
     before = len(df)
     df = df[recv_qty_num != 0].reset_index(drop=True)
@@ -580,32 +570,46 @@ if __name__ == "__main__":
     ].reset_index(drop=True)
     print(f"🔎 Receive Date in {FROM_DATE_OBJ} → {REPORT_MONTH_LAST} filter: {before} → {len(df)} rows")
 
-    # Rename placeholder blanks to "" for output
-    df_out = df.rename(columns={"_blank1": ""})
+    po_type_norm = df["Po Type"].astype(str).str.strip().str.lower()
+    print(f"📋 Po Type values: {po_type_norm.value_counts().to_dict()}")
 
-    output_file = f"stock_report_{COMPANY_NAME.lower().replace(' ', '_')}_{FROM_DATE}_{TO_DATE}.xlsx"
-    df_out.to_excel(output_file, index=False)
-    print(f"📂 Saved: {output_file}  ({len(df_out)} rows)")
-
+    client = None
     try:
         client = get_gspread_client()
         sheet = client.open_by_key(SHEET_KEY)
-        try:
-            worksheet = sheet.worksheet(WORKSHEET_NAME)
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=WORKSHEET_NAME, rows=max(len(df_out) + 50, 100), cols=len(COLUMNS) + 2)
-            print(f"➕ Created new worksheet '{WORKSHEET_NAME}'")
-        worksheet.batch_clear(["A:AH"])
-        set_with_dataframe(worksheet, df_out)
-        # Force numeric format on quantity/value columns so Sheets doesn't
-        # auto-render integers as 1900-era dates.
-        num_fmt = {"numberFormat": {"type": "NUMBER", "pattern": "0.########"}}
-        for col in ("H:I", "N:N", "P:R", "U:W", "Z:Z", "AB:AB"):
-            worksheet.format(col, num_fmt)
-        print(f"✅ Data pasted to Google Sheets → '{WORKSHEET_NAME}'")
     except Exception as e:
-        import traceback
-        print(f"❌ Error while pasting to Google Sheets: {e}")
-        traceback.print_exc()
+        print(f"❌ Google Sheets unavailable: {e}")
+
+    # ========= ONE TAB PER PO TYPE =========
+    for po_type, tab_name in PO_TYPE_TABS.items():
+        sub = df[po_type_norm == po_type].reset_index(drop=True)
+        print(f"🔎 Po Type={po_type}: {len(sub)} rows → tab '{tab_name}'")
+
+        sub_out = sub.rename(columns={"_blank1": ""})
+        output_file = f"stock_report_{COMPANY_NAME.lower().replace(' ', '_')}_{po_type}_{FROM_DATE}_{TO_DATE}.xlsx"
+        sub_out.to_excel(output_file, index=False)
+        print(f"📂 Saved: {output_file}  ({len(sub_out)} rows)")
+
+        if client is None:
+            continue
+        try:
+            try:
+                worksheet = sheet.worksheet(tab_name)
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = sheet.add_worksheet(title=tab_name, rows=max(len(sub_out) + 50, 100), cols=len(COLUMNS) + 2)
+                print(f"➕ Created new worksheet '{tab_name}'")
+            # Clear wide (beyond Z) to wipe any leftover/shifted columns from old pastes
+            worksheet.batch_clear(["A:AH"])
+            set_with_dataframe(worksheet, sub_out)
+            # Force numeric format on quantity/value columns so Sheets doesn't
+            # auto-render integers as 1900-era dates.
+            num_fmt = {"numberFormat": {"type": "NUMBER", "pattern": "0.########"}}
+            for col in ("G:G", "J:J", "L:N", "P:Q", "T:U"):
+                worksheet.format(col, num_fmt)
+            print(f"✅ Data pasted to Google Sheets → '{tab_name}'")
+        except Exception as e:
+            import traceback
+            print(f"❌ Error while pasting '{tab_name}': {e}")
+            traceback.print_exc()
 
     print("✅ Done")
